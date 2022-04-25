@@ -1,0 +1,78 @@
+// Copy to marquee_config.h and customize where needed.
+
+#include <FastLED.h>
+#include <LEDMatrix.h>
+#include <FontClassic.h>
+#include <FontMatrise.h>
+#include <pixeltypes.h>
+
+// Starting pin for data out. (For multi-section marquees, see below)
+constexpr uint8_t kLedPin = 16;
+
+// If kResetPin is pulled low during startup, reset configuration. If it's
+// pulled low during normal operation, enter config mode.
+constexpr uint8_t kResetPin = 2;
+
+// Matrix parameters.
+constexpr MatrixType_t kMatrixType = MatrixType_t::VERTICAL_ZIGZAG_MATRIX;
+constexpr EOrder kColorOrder = EOrder::GRB;
+#define CHIPSET WS2812B
+
+// The complete marquee is made up of one or more "sections",
+// each of which is made of one or more daisy-chained "panels". The sections are
+// placed next to each other, but are each fed from their own data pin. This
+// allows for a higher frame rate on long marquees.
+//
+// E.g., a reverse-direction marquee with 3 sections, each with 3 panels:
+// [s3p3][s3p2][s3p1][s2p3][s2p2][s2p1][s1p3][s1p2][s1p1]
+//                  \-pin18           \-pin17           \-pin16
+//
+// Currently, there is no support for non-rectangular displays (in other words,
+// there's only one height for everything), all sections are assumed to have the
+// same number of panels, and all pin numbers are assumed to be sequential
+// starting with kLedPin.
+//
+// For single panel, just set panels and sections to 1.
+constexpr int kPanelHeight = 8;
+constexpr int kPanelWidth = 32;
+
+constexpr int kPanelsPerSection = 1;
+constexpr int kMarqueeSections = 1;
+static_assert(kMarqueeSections < 4,
+              "Extend led_marquee::DisplayManager to support more sections");
+
+// Set to true if "data in" is on the rightmost end of your marquee.
+constexpr bool kReverseDirection = true;
+
+// Limit maximum power usage
+constexpr uint8_t kLedVolts = 5;
+constexpr float kLedMaxAmps = 2.4;
+
+// Time configuration
+const char* kTimeZone = "EST5EDT,M3.2.0,M11.1.0";
+const char* kNtpServer = "pool.ntp.org";
+
+// Access point to create for initial setup
+const char* kSetupAp = "LEDSetupAP";
+
+// Pixel width of the clock section (0 to disable)
+constexpr uint8_t kClockWidth = 50;
+
+// Fonts for text scroller and clock
+constexpr const uint8_t* kTextFont = ClassicFontData;
+constexpr const uint8_t* kClockFont = MatriseFontData;
+
+// Default message to show after booting
+const char* kStartupMessage = "LED Marquee v1.1";
+
+// Messages longer than this will be truncated
+constexpr int kMaxMessageLen = 1024;
+
+// Delay to wait for a new message before repeating the existing one
+constexpr unsigned long kSmWaitTime = 1000;  // millis
+
+// Where to root the MQTT topic tree for controlling marquees
+const char* kMqttPrefix = "marquee";
+
+// MQTT topic root for Home Assistant discovery
+const char* kHaDiscoveryPrefix = "homeassistant";
