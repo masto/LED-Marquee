@@ -76,8 +76,8 @@ class DisplayManager {
   void SetBrightness(const uint8_t brightness);
 
   void FillArea(const int x, const int y, const int width, const int height,
-                 const CRGB color = CRGB::Black) {
-    leds_->DrawFilledRectangle(x, y, width, height, color);
+                const CRGB color = CRGB::Black) {
+    leds_->DrawFilledRectangle(x, y, x + width - 1, y + height - 1, color);
   };
 
  private:
