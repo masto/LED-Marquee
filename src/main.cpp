@@ -715,12 +715,11 @@ void loop() {
       clock_hue++;
       SetClockColor();
 
-      struct tm timeinfo;
-      if (getLocalTime(&timeinfo)) {
-        char t[40];
-        strftime(t, sizeof(t), "%l:%M:%S", &timeinfo);
-        layout->clock().SetText(t);
-      }
+      time_t now = time(NULL);
+      tm *timeinfo = localtime(&now);
+      char t[40];
+      strftime(t, sizeof(t), "%l:%M:%S", timeinfo);
+      layout->clock().SetText(t);
     }
   }
 
