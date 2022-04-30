@@ -19,7 +19,7 @@ lib_deps =
 	https://github.com/masto/LEDText#1c7a90d
 	https://github.com/AaronLiddiment/LEDMatrix#1ba98bc
 	https://github.com/tzapu/WiFiManager#v2.0.11-beta
-	me-no-dev/ESP Async WebServer@^1.2.3
+	ottowinter/ESPAsyncWebServer-esphome@^2.1.0
 	bblanchon/ArduinoJson@^6.19.3
 	ayushsharma82/WebSerial@^1.3.0
 	marvinroger/AsyncMqttClient@^0.9.0
