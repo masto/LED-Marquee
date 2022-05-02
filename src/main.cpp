@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Suppress annoying warnings
+#define FASTLED_INTERNAL
+
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
@@ -40,13 +43,14 @@ extern "C" {
 #include "text_layout.h"
 #include "text_scroller.h"
 #include "text_with_clock_layout.h"
+#include "user_config.h"
 
 typedef const char *FsLabel;
 const FsLabel kUserFsLabel = "/user";
 const FsLabel kSpiffsFsLabel = "/spiffs";
 const String kConfigFileName = "/config.json";
 
-WiFiManager wm;
+std::shared_ptr<WiFiManager> wm = std::make_shared<WiFiManager>();
 AsyncWebServer server(80);
 AsyncMqttClient mqtt_client;
 CEveryNMillis *scroll_timer;
@@ -69,23 +73,7 @@ String mqtt_node_topic;
 String mqtt_command_topic;
 String mqtt_ready_topic;
 
-// User-configured parameters, exposed via WiFiManager.
-// We abuse preprocessor macros quite heavily to avoid having to
-// repeat any of this information. It's for the greater good.
-#define WM_USER_PARAMS                                           \
-  WM_STR_PARAM(hostname, "mDNS hostname", "", 63)                \
-  WM_HTML("<hr /><p>Leave MQTT host blank to disable MQTT.</p>") \
-  WM_STR_PARAM(mqtt_host, "MQTT host", "", 63)                   \
-  WM_NUM_PARAM(mqtt_port, "MQTT port", 1883, 5)                  \
-  WM_STR_PARAM(mqtt_user, "MQTT user", "", 16)                   \
-  WM_STR_PARAM(mqtt_pass, "MQTT password", "", 16)               \
-  WM_HTML(                                                       \
-      "<p>Unique identifier for this node. Will receive events " \
-      "under <i>" +                                              \
-      String(kMqttPrefix) + "/&lt;node name&gt;</i> topic.</p>") \
-  WM_STR_PARAM(mqtt_node, "MQTT node name", "marquee", 16)
-
-#include "wm_params/declarations.h"
+led_marquee::UserConfig config(wm);
 
 // Process one tick of the animation loop
 void AnimateScroller() {
@@ -193,7 +181,7 @@ void CheckForResetConfig() {
         layout->text().ShowStaticText("CLR!");
         Serial.println("Clearing settings");
         // Reset WiFiManager config
-        wm.resetSettings();
+        wm->resetSettings();
         // Format the user filesystem
         auto fs = GetFileSystem(kUserFsLabel);
         if (fs) {
@@ -201,7 +189,7 @@ void CheckForResetConfig() {
           fs->format();
         }
         delay(1000);
-        wm.reboot();
+        wm->reboot();
       }
     }
   }
@@ -211,7 +199,7 @@ void CheckForResetConfig() {
 void SaveParamsCallback() {
   should_save_config = true;
 
-#include "wm_params/copy_config.h"
+  config.ReadFromWifiManager();
 }
 
 // When WiFiManager enters configuration mode, display a prompt
@@ -228,14 +216,14 @@ void ConfigModeCallback(WiFiManager *myWiFiManager) {
 void WmWebServerCallback() {
   // Unfortunately, we can't do anything great here, but we can at least reboot
   // to get out of the loop.
-  wm.server->on(G(R_exit), [] {
+  wm->server->on(G(R_exit), [] {
     Serial.println("Exiting web config and rebooting");
 
-    wm.server->sendHeader("Cache-Control",
-                          "no-cache, no-store, must-revalidate");
-    wm.server->send(200, "text/plain", "Bye!");
+    wm->server->sendHeader("Cache-Control",
+                           "no-cache, no-store, must-revalidate");
+    wm->server->send(200, "text/plain", "Bye!");
     delay(1000);
-    wm.reboot();
+    wm->reboot();
   });
 }
 
@@ -257,7 +245,7 @@ void LoadUserConfig() {
       DynamicJsonDocument json(1024);
       auto deserializeError = deserializeJson(json, buf.get());
       if (!deserializeError) {
-#include "wm_params/deserialize.h"
+        config.ReadFromJson(json);
       } else {
         Serial.print("failed to parse json config: ");
         Serial.println(deserializeError.c_str());
@@ -274,15 +262,13 @@ void LoadUserConfig() {
 
 // Initialize WiFi Manager in non-blocking mode
 void SetupWiFiManager() {
-  wm.setConfigPortalBlocking(false);
+  wm->setConfigPortalBlocking(false);
 
-#include "wm_params/add_to_wm.h"
+  wm->setAPCallback(ConfigModeCallback);
+  wm->setSaveParamsCallback(SaveParamsCallback);
+  wm->setWebServerCallback(WmWebServerCallback);
 
-  wm.setAPCallback(ConfigModeCallback);
-  wm.setSaveParamsCallback(SaveParamsCallback);
-  wm.setWebServerCallback(WmWebServerCallback);
-
-  wm.setConfigPortalTimeout(300);
+  wm->setConfigPortalTimeout(300);
 }
 
 void SetClockColor() { layout->clock().SetColorHsv(clock_hue, 0xff, 0xff); }
@@ -315,7 +301,7 @@ void SaveConfigAndRestart() {
   Serial.println("saving config");
 
   DynamicJsonDocument json(1024);
-#include "wm_params/serialize.h"
+  config.ToJson(json);
 
   auto fs = GetFileSystem(kUserFsLabel);
   if (fs) {
@@ -337,31 +323,31 @@ void SaveConfigAndRestart() {
 void DumpWmInfo() {
   Serial.println();
   Serial.print("getConfigPortalActive: ");
-  Serial.println(wm.getConfigPortalActive());
+  Serial.println(wm->getConfigPortalActive());
 
   Serial.print("getConfigPortalSSID: ");
-  Serial.println(wm.getConfigPortalSSID());
+  Serial.println(wm->getConfigPortalSSID());
 
   Serial.print("getDefaultAPName: ");
-  Serial.println(wm.getDefaultAPName());
+  Serial.println(wm->getDefaultAPName());
 
   Serial.print("getLastConxResult: ");
-  Serial.println(wm.getLastConxResult());
+  Serial.println(wm->getLastConxResult());
 
   Serial.print("getModeString: ");
-  Serial.println(wm.getModeString((uint8_t)WiFi.getMode()));
+  Serial.println(wm->getModeString((uint8_t)WiFi.getMode()));
 
   Serial.print("getWebPortalActive: ");
-  Serial.println(wm.getWebPortalActive());
+  Serial.println(wm->getWebPortalActive());
 
   Serial.print("getWiFiHostname: ");
-  Serial.println(wm.getWiFiHostname());
+  Serial.println(wm->getWiFiHostname());
 
   Serial.print("getWiFiIsSaved: ");
-  Serial.println(wm.getWiFiIsSaved());
+  Serial.println(wm->getWiFiIsSaved());
 
   Serial.print("getWLStatusString: ");
-  Serial.println(wm.getWLStatusString());
+  Serial.println(wm->getWLStatusString());
 }
 
 void ConnectToMqtt() {
@@ -371,11 +357,12 @@ void ConnectToMqtt() {
 
 // Publish Home Assistant discovery config
 void MqttDiscovery() {
-  if (!strlen(mqtt_node)) return;
+  String mqtt_node(config.StringValue("mqtt_node"));
+  if (mqtt_node.isEmpty()) return;
 
   uint8_t wifi_mac[8];
   WiFi.macAddress(wifi_mac);
-  String mqtt_client_id = String(mqtt_node) + "-" + String(wifi_mac[0], HEX) +
+  String mqtt_client_id = mqtt_node + "-" + String(wifi_mac[0], HEX) +
                           String(wifi_mac[1], HEX) + String(wifi_mac[2], HEX) +
                           String(wifi_mac[3], HEX) + String(wifi_mac[4], HEX) +
                           String(wifi_mac[5], HEX);
@@ -407,7 +394,7 @@ void MqttDiscovery() {
 void OnMqttConnect(bool sessionPresent) {
   Serial.println("Connected to MQTT");
 
-  mqtt_node_topic = String(kMqttPrefix) + "/" + mqtt_node;
+  mqtt_node_topic = String(kMqttPrefix) + "/" + config.StringValue("mqtt_node");
   mqtt_command_topic = mqtt_node_topic + "/set";
   mqtt_ready_topic = mqtt_node_topic + "/ready";
 
@@ -487,7 +474,14 @@ void OnMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
 }
 
 void InitMqtt() {
+  const char *mqtt_host = config.StringValue("mqtt_host");
   if (!strlen(mqtt_host)) return;
+
+  const char *mqtt_user = config.StringValue("mqtt_user");
+  const char *mqtt_pass = config.StringValue("mqtt_pass");
+
+  Serial.printf("MQTT: host=%s user=%s port=%d\n", mqtt_host, mqtt_user,
+                config.IntValue("mqtt_port"));
 
   mqtt_reconnect_timer =
       xTimerCreate("mqtt_timer", pdMS_TO_TICKS(2000), pdFALSE, (void *)0,
@@ -496,7 +490,7 @@ void InitMqtt() {
   mqtt_client.onConnect(OnMqttConnect);
   mqtt_client.onDisconnect(OnMqttDisconnect);
   mqtt_client.onMessage(OnMqttMessage);
-  mqtt_client.setServer(mqtt_host, mqtt_port);
+  mqtt_client.setServer(mqtt_host, config.IntValue("mqtt_port"));
   mqtt_client.setCredentials(mqtt_user, mqtt_pass);
 
   ConnectToMqtt();
@@ -569,7 +563,9 @@ void InitMain() {
 }
 
 void InitArduinoOTA() {
+  const char *hostname = config.StringValue("hostname");
   if (strlen(hostname)) ArduinoOTA.setHostname(hostname);
+
   ArduinoOTA.setPartitionLabel(&kSpiffsFsLabel[1]);
 
   static led_marquee::TextLayout ota_message(*display_manager, MatriseFontData,
@@ -633,7 +629,8 @@ void InitArduinoOTA() {
 }
 
 void RebootIfDisconnected(byte &disconnect_count) {
-  if (WiFi.status() == WL_DISCONNECTED && wm.getConfigPortalActive() == false) {
+  if (WiFi.status() == WL_DISCONNECTED &&
+      wm->getConfigPortalActive() == false) {
     disconnect_count++;
     Serial.println(String("WL_DISCONNECTED count: ") + disconnect_count);
     if (disconnect_count > 1) {
@@ -648,7 +645,7 @@ void RebootIfDisconnected(byte &disconnect_count) {
 
 // Detect when WiFi has come up, and complete initialization
 void CheckForStartup() {
-  if (is_connected == false && wm.getConfigPortalActive() == false &&
+  if (is_connected == false && wm->getConfigPortalActive() == false &&
       WiFi.status() == WL_CONNECTED) {
     is_connected = true;
     config_mode = false;
@@ -672,6 +669,18 @@ void setup() {
 
   layout->text().ShowStaticText("START");
 
+  config.AddParam("hostname", "mDNS hostname", "", 63);
+  config.AddHtml("<hr /><p>Leave MQTT host blank to disable MQTT.</p>");
+  config.AddParam("mqtt_host", "MQTT host", "", 63);
+  config.AddParam("mqtt_port", "MQTT port", "1883", 5);
+  config.AddParam("mqtt_user", "MQTT user", "", 16);
+  config.AddParam("mqtt_pass", "MQTT password", "", 16);
+  config.AddHtml(
+      "<p>Unique identifier for this node. Will receive events "
+      "under <i>" +
+      String(kMqttPrefix) + "/&lt;node name&gt;</i> topic.</p>");
+  config.AddParam("mqtt_node", "MQTT node name", "marquee", 16);
+
   web_fs = GetFileSystem(kSpiffsFsLabel);
 
   LoadUserConfig();
@@ -681,7 +690,7 @@ void setup() {
   SetupWiFiManager();
 
   Serial.println("Connecting to WiFi...");
-  bool res = wm.autoConnect(kSetupAp);
+  bool res = wm->autoConnect(kSetupAp);
   Serial.println(res ? "Connected" : "Connection failed");
 
   InitTime();
@@ -693,7 +702,7 @@ void loop() {
   static byte disconnectCount = 0;
 
   // Run asynchronous WiFi Manager
-  if (config_mode == true || is_connected == false) wm.process();
+  if (config_mode == true || is_connected == false) wm->process();
 
   if (should_save_config) SaveConfigAndRestart();
 
@@ -739,8 +748,8 @@ void loop() {
                                     WiFi.localIP().toString());
       Serial.println("Enter WebPortal");
       server.end();
-      wm.setParamsPage(true);
-      wm.startWebPortal();
+      wm->setParamsPage(true);
+      wm->startWebPortal();
     }
   }
 }
