@@ -13,7 +13,8 @@ platform = espressif32
 board = esp32dev
 framework = arduino
 build_unflags = -std=gnu++11
-build_flags = -std=gnu++17
+build_flags = -std=gnu++17 -w
+src_build_flags = -Wall -Wextra -Wpedantic -Wconversion -Werror
 lib_deps = 
 	fastled/FastLED@^3.5.0
 	https://github.com/masto/LEDText#1c7a90d
