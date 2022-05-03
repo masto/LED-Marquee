@@ -82,8 +82,13 @@ void AnimateScroller() {
 
   if (!scroll_wait) {
     if (!layout->text().Animate()) {
-      // Hit the end. Is there a new message queued?
-      if (!scroll_next.isEmpty()) {
+      // Hit the end. First, make sure we're in normal mode.
+      if (config_mode) {
+        // In config mode, we're not processing the queue.
+        layout->text().ShowScrollText();
+      }
+      // Is there a new message queued?
+      else if (!scroll_next.isEmpty()) {
         // Something's queued up. Show it.
         layout->text().ShowScrollText(scroll_next);
         // Clear the queue
