@@ -18,9 +18,9 @@ import argparse
 import colorsys
 import io
 import json
-from os import path
 import random
 import sys
+from os import path
 
 import paho.mqtt.client as mqtt
 

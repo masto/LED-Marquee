@@ -14,10 +14,11 @@
 
 # Word clock
 
-import time
-import paho.mqtt.client as mqtt
-import json
 import argparse
+import json
+import time
+
+import paho.mqtt.client as mqtt
 
 digits = [
     "zero",
