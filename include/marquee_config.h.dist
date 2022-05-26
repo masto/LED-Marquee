@@ -6,8 +6,8 @@
 #include <FontMatrise.h>
 #include <pixeltypes.h>
 
-// Starting pin for data out. (For multi-section marquees, see below)
-constexpr uint8_t kLedPin = 16;
+// Pin(s) used for data out. (For multi-section marquees, see below)
+constexpr uint8_t kLedPins[3] = {16};
 
 // If kResetPin is pulled low during startup, reset configuration. If it's
 // pulled low during normal operation, enter config mode.
@@ -28,9 +28,8 @@ constexpr EOrder kColorOrder = EOrder::GRB;
 //                  \-pin18           \-pin17           \-pin16
 //
 // Currently, there is no support for non-rectangular displays (in other words,
-// there's only one height for everything), all sections are assumed to have the
-// same number of panels, and all pin numbers are assumed to be sequential
-// starting with kLedPin.
+// there's only one height for everything), and all sections are assumed to have
+// the same number of panels. In this example, set kLedPins[] = {16, 17, 18}.
 //
 // For single panel, just set panels and sections to 1.
 constexpr int kPanelHeight = 8;

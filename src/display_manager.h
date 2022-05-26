@@ -30,7 +30,7 @@ class DisplayManager {
  public:
   // This is not very generalized, but all this use of templates makes it hard
   // to dynamically instantiate everything.
-  template <template <uint8_t, EOrder> class chipset, uint8_t data_pin,
+  template <template <uint8_t, EOrder> class chipset, const uint8_t data_pins[],
             EOrder color_order>
   static std::unique_ptr<DisplayManager> Create(
       int num_sections, int section_width, int matrix_height,
@@ -41,12 +41,13 @@ class DisplayManager {
     // This is particularly ugly. To support more sections, this code needs
     // to be copied and pasted.
     const int section_pixels = section_width * matrix_height;
-    FastLED.addLeds<chipset, data_pin, color_order>((*leds)[0], section_pixels);
+    FastLED.addLeds<chipset, data_pins[0], color_order>((*leds)[0],
+                                                        section_pixels);
     if (num_sections > 1)
-      FastLED.addLeds<chipset, data_pin + 1, color_order>(
+      FastLED.addLeds<chipset, data_pins[1], color_order>(
           (*leds)[section_pixels * 1], section_pixels);
     if (num_sections > 2)
-      FastLED.addLeds<chipset, data_pin + 2, color_order>(
+      FastLED.addLeds<chipset, data_pins[2], color_order>(
           (*leds)[section_pixels * 2], section_pixels);
     assert(num_sections < 4);
 

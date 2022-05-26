@@ -283,7 +283,7 @@ void InitLEDs() {
   constexpr int kMarqueeWidth = kSectionWidth * kMarqueeSections;
 
   display_manager =
-      led_marquee::DisplayManager::Create<CHIPSET, kLedPin, kColorOrder>(
+      led_marquee::DisplayManager::Create<CHIPSET, kLedPins, kColorOrder>(
           kMarqueeSections, kSectionWidth, kPanelHeight,
           std::make_shared<
               cLEDMatrix<(kReverseDirection ? -kMarqueeWidth : kMarqueeWidth),
