@@ -8,13 +8,17 @@
 ; Please visit documentation for the other options and examples
 ; https://docs.platformio.org/page/projectconf.html
 
+[env]
+build_unflags = -std=gnu++11
+build_flags = -std=gnu++17 -w
+build_src_flags = -Wall -Wextra -Wpedantic -Wconversion -Werror
+test_framework = googletest
+
 [env:esp32dev]
 platform = espressif32
 board = esp32dev
 framework = arduino
-build_unflags = -std=gnu++11
-build_flags = -std=gnu++17 -w
-src_build_flags = -Wall -Wextra -Wpedantic -Wconversion -Werror
+test_ignore = native/*
 lib_deps = 
 	fastled/FastLED@^3.5.0
 	https://github.com/masto/LEDText#1c7a90d
@@ -29,3 +33,6 @@ monitor_speed = 115200
 ;; Uncomment below for OTA update
 ; upload_port = your-marquee-hostname.local
 ; upload_protocol = espota
+
+[env:native]
+platform = native

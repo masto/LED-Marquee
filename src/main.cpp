@@ -26,11 +26,13 @@
 #include <LEDText.h>
 #include <SPIFFS.h>
 #include <WiFiManager.h>
+#include <interpolate.h>
 // Needed to resolve conflict between ArduinoOTA and ESPAsyncWebServer
 #define WEBSERVER_H
 #include <ESPAsyncWebServer.h>
 
 #include <memory>
+#include <string>
 
 extern "C" {
 #include "freertos/FreeRTOS.h"
@@ -432,10 +434,12 @@ void OnMqttMessage(char *topic, char *payload,
       }
     } else if (str_topic == mqtt_node_topic + "/text") {
       if (json.containsKey("text")) {
+        const std::string text = led_marquee::Interpolate(json["text"]);
+        const String str(text.data(), text.length());
         if (json.containsKey("scroll") && json["scroll"] == false) {
-          layout->text().ShowStaticText(json["text"]);
+          layout->text().ShowStaticText(str);
         } else {
-          scroll_next = json["text"].as<String>();
+          scroll_next = str;
         }
       } else {
         Serial.println("missing key 'text'");
