@@ -43,7 +43,7 @@ digits = [
     "nineteen",
 ]
 
-tens = ["", "ten", "twenty", "thirty", "fourty", "fifty"]
+tens = ["", "ten", "twenty", "thirty", "forty", "fifty"]
 
 
 def word(n):
