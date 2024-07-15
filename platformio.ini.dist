@@ -20,7 +20,7 @@ board = esp32dev
 framework = arduino
 test_ignore = native/*
 lib_deps = 
-	fastled/FastLED@^3.5.0
+	fastled/FastLED@^3.7.0
 	https://github.com/masto/LEDText#1c7a90d
 	https://github.com/AaronLiddiment/LEDMatrix#1ba98bc
 	https://github.com/tzapu/WiFiManager#v2.0.11-beta
