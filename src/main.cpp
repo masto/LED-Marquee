@@ -440,6 +440,7 @@ void OnMqttMessage(char *topic, char *payload,
           layout->text().ShowStaticText(str);
         } else {
           scroll_next = str;
+          layout->text().EnableScrolling();
         }
       } else {
         Serial.println("missing key 'text'");

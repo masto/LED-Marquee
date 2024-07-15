@@ -57,6 +57,12 @@ void TextScroller::SetBackgroundMode(uint16_t options, uint8_t dimming) {
   led_text_.SetBackgroundMode(options, dimming);
 }
 
+void TextScroller::EnableScrolling() {
+  if (scroll_mode_ != ScrollMode::kScrolling) {
+    ShowScrollText("");
+  }
+}
+
 void TextScroller::ShowStaticText(const String &text) {
   scroll_mode_ = ScrollMode::kStatic;
 

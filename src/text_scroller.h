@@ -40,6 +40,7 @@ class TextScroller {
   void SetColorRgb(uint8_t r, uint8_t g, uint8_t b);
   void SetBackgroundMode(uint16_t options, uint8_t dimming = 0x00);
   void SetMaxLength(const int max_length) { max_length_ = max_length; };
+  void EnableScrolling();
 
   void ShowStaticText(const String &);
   void ShowScrollText(const String &);
