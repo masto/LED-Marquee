@@ -223,7 +223,7 @@ void ConfigModeCallback(WiFiManager *myWiFiManager) {
 void WmWebServerCallback() {
   // Unfortunately, we can't do anything great here, but we can at least reboot
   // to get out of the loop.
-  wm->server->on(G(R_exit), [] {
+  wm->server->on(WM_G(R_exit), [] {
     Serial.println("Exiting web config and rebooting");
 
     wm->server->sendHeader("Cache-Control",

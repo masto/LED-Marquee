@@ -18,20 +18,20 @@ build_src_flags = -Wall -Wextra -Wpedantic -Wconversion -Werror
 test_framework = googletest
 
 [env:esp32dev]
-platform = espressif32@^6.7.0
+platform = espressif32@^6.8.1
 platform_packages =
 	platformio/framework-arduinoespressif32@^3.20017.0
 board = esp32dev
 framework = arduino
 test_ignore = native/*
 lib_deps = 
-	fastled/FastLED@^3.7.0
+	fastled/FastLED@^3.7.1
 	https://github.com/masto/LEDText#1c7a90d
 	https://github.com/AaronLiddiment/LEDMatrix#1ba98bc
-	https://github.com/tzapu/WiFiManager#v2.0.11-beta
+	https://github.com/tzapu/WiFiManager#v2.0.17
 	ottowinter/ESPAsyncWebServer-esphome@^3.2.2
-	bblanchon/ArduinoJson@^6.19.3
-	ottowinter/AsyncMqttClient-esphome@^0.8.6
+	bblanchon/ArduinoJson@^7.1.0
+	heman/AsyncMqttClient-esphome@^2.1.0
 board_build.partitions = partition_custom.csv
 monitor_speed = 115200
 ;; Uncomment below for OTA update
