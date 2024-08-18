@@ -21,6 +21,7 @@
 
 #include <cstddef>
 
+#include "debug_serial.h"
 #include "display_manager.h"
 
 namespace led_marquee {
@@ -68,11 +69,11 @@ void TextScroller::ShowStaticText(const String &text) {
 
   auto len = text.length();
   if (len > max_length_) {
-    Serial.print("WARNING: Message truncated (");
-    Serial.print(len);
-    Serial.print(" > ");
-    Serial.print(max_length_);
-    Serial.println(")");
+    debug_print("WARNING: Message truncated (");
+    debug_print(len);
+    debug_print(" > ");
+    debug_print(max_length_);
+    debug_println(")");
   }
 
   String message = text.substring(0, max_length_);
@@ -92,11 +93,11 @@ void TextScroller::ShowScrollText(const String &text) {
 
   auto len = text.length();
   if (len > max_length_) {
-    Serial.print("WARNING: Message truncated (");
-    Serial.print(len);
-    Serial.print(" > ");
-    Serial.print(max_length_);
-    Serial.println(")");
+    debug_print("WARNING: Message truncated (");
+    debug_print(len);
+    debug_print(" > ");
+    debug_print(max_length_);
+    debug_println(")");
   }
 
   scroll_buf_ = spaces_ + text.substring(0, max_length_);

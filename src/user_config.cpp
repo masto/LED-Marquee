@@ -24,6 +24,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "debug_serial.h"
+
 namespace led_marquee {
 
 const char *UserConfig::StringValue(std::string param) const {
@@ -85,7 +87,7 @@ void UserConfig::ReadFromJson(const DynamicJsonDocument &json) {
         strlcpy(param.value.get(), source, param.len + 1);
         param.wm_param->setValue(param.value.get(), param.len);
       } else {
-        Serial.printf("Unknown JSON type for '%s'\n", name.c_str());
+        debug_printf("Unknown JSON type for '%s'\n", name.c_str());
       }
     }
   }

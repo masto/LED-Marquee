@@ -40,6 +40,7 @@ extern "C" {
 }
 
 #include "clock.h"
+#include "debug_serial.h"
 #include "display_manager.h"
 #include "marquee_config.h"
 #include "text_layout.h"
@@ -141,7 +142,7 @@ void RemoveClock() {
 std::unique_ptr<fs::SPIFFSFS> GetFileSystem(const FsLabel label) {
   auto fs = std::make_unique<fs::SPIFFSFS>();
   if (!fs->begin(true, label, 10, &label[1])) {
-    Serial.println("Failed to mount filesystem");
+    debug_println("Failed to mount filesystem");
     return nullptr;
   }
 
@@ -155,8 +156,8 @@ void PrintFileList(fs::SPIFFSFS &fs) {
   while (file) {
     String fileName = file.name();
     size_t fileSize = file.size();
-    Serial.printf("FS File: %s, size: %s\n", fileName.c_str(),
-                  String(fileSize).c_str());
+    debug_printf("FS File: %s, size: %s\n", fileName.c_str(),
+                 String(fileSize).c_str());
     file = root.openNextFile();
   }
 }
@@ -186,7 +187,7 @@ void CheckForResetConfig() {
 
       if (digitalRead(kResetPin) == LOW) {
         layout->text().ShowStaticText("CLR!");
-        Serial.println("Clearing settings");
+        debug_println("Clearing settings");
         // Reset WiFiManager config
         wm->resetSettings();
         // Format the user filesystem
@@ -224,7 +225,7 @@ void WmWebServerCallback() {
   // Unfortunately, we can't do anything great here, but we can at least reboot
   // to get out of the loop.
   wm->server->on(WM_G(R_exit), [] {
-    Serial.println("Exiting web config and rebooting");
+    debug_println("Exiting web config and rebooting");
 
     wm->server->sendHeader("Cache-Control",
                            "no-cache, no-store, must-revalidate");
@@ -240,7 +241,7 @@ void LoadUserConfig() {
   if (!fs) return;
 
   if (fs->exists(kConfigFileName)) {
-    Serial.println("reading config file");
+    debug_println("reading config file");
     File configFile = fs->open(kConfigFileName, "r");
     if (configFile) {
       size_t size = configFile.size();
@@ -254,12 +255,12 @@ void LoadUserConfig() {
       if (!deserializeError) {
         config.ReadFromJson(json);
       } else {
-        Serial.print("failed to parse json config: ");
-        Serial.println(deserializeError.c_str());
+        debug_print("failed to parse json config: ");
+        debug_println(deserializeError.c_str());
       }
       json["mqtt_pass"] = "*****";
       serializeJsonPretty(json, Serial);
-      Serial.println();
+      debug_println();
       configFile.close();
     }
   }
@@ -305,7 +306,7 @@ void InitLEDs() {
 // Save config to filesystem. And then reboot to ensure clean initialization.
 void SaveConfigAndRestart() {
   should_save_config = false;
-  Serial.println("saving config");
+  debug_println("saving config");
 
   DynamicJsonDocument json(1024);
   config.ToJson(json);
@@ -314,7 +315,7 @@ void SaveConfigAndRestart() {
   if (fs) {
     File config_file = fs->open(kConfigFileName, "w");
     if (!config_file) {
-      Serial.println("failed to open config file for writing");
+      debug_println("failed to open config file for writing");
     }
 
     serializeJson(json, config_file);
@@ -328,37 +329,37 @@ void SaveConfigAndRestart() {
 }
 
 void DumpWmInfo() {
-  Serial.println();
-  Serial.print("getConfigPortalActive: ");
-  Serial.println(wm->getConfigPortalActive());
+  debug_println();
+  debug_print("getConfigPortalActive: ");
+  debug_println(wm->getConfigPortalActive());
 
-  Serial.print("getConfigPortalSSID: ");
-  Serial.println(wm->getConfigPortalSSID());
+  debug_print("getConfigPortalSSID: ");
+  debug_println(wm->getConfigPortalSSID());
 
-  Serial.print("getDefaultAPName: ");
-  Serial.println(wm->getDefaultAPName());
+  debug_print("getDefaultAPName: ");
+  debug_println(wm->getDefaultAPName());
 
-  Serial.print("getLastConxResult: ");
-  Serial.println(wm->getLastConxResult());
+  debug_print("getLastConxResult: ");
+  debug_println(wm->getLastConxResult());
 
-  Serial.print("getModeString: ");
-  Serial.println(wm->getModeString((uint8_t)WiFi.getMode()));
+  debug_print("getModeString: ");
+  debug_println(wm->getModeString((uint8_t)WiFi.getMode()));
 
-  Serial.print("getWebPortalActive: ");
-  Serial.println(wm->getWebPortalActive());
+  debug_print("getWebPortalActive: ");
+  debug_println(wm->getWebPortalActive());
 
-  Serial.print("getWiFiHostname: ");
-  Serial.println(wm->getWiFiHostname());
+  debug_print("getWiFiHostname: ");
+  debug_println(wm->getWiFiHostname());
 
-  Serial.print("getWiFiIsSaved: ");
-  Serial.println(wm->getWiFiIsSaved());
+  debug_print("getWiFiIsSaved: ");
+  debug_println(wm->getWiFiIsSaved());
 
-  Serial.print("getWLStatusString: ");
-  Serial.println(wm->getWLStatusString());
+  debug_print("getWLStatusString: ");
+  debug_println(wm->getWLStatusString());
 }
 
 void ConnectToMqtt() {
-  Serial.println("Connecting to MQTT...");
+  debug_println("Connecting to MQTT...");
   mqtt_client.connect();
 }
 
@@ -393,13 +394,13 @@ void MqttDiscovery() {
   String topic = String(kHaDiscoveryPrefix) + "/light/" + mqtt_node + "/config";
   mqtt_client.publish(topic.c_str(), 0, true, payload.c_str());
 
-  Serial.printf("Published HA discovery to %s:\n", topic.c_str());
+  debug_printf("Published HA discovery to %s:\n", topic.c_str());
   serializeJsonPretty(doc, Serial);
-  Serial.println();
+  debug_println();
 }
 
 void OnMqttConnect(bool sessionPresent) {
-  Serial.println("Connected to MQTT");
+  debug_println("Connected to MQTT");
 
   mqtt_node_topic = String(kMqttPrefix) + "/" + config.StringValue("mqtt_node");
   mqtt_command_topic = mqtt_node_topic + "/set";
@@ -407,7 +408,7 @@ void OnMqttConnect(bool sessionPresent) {
 
   String mqtt_subscription = mqtt_node_topic + "/#";
   mqtt_client.subscribe(mqtt_subscription.c_str(), 0);
-  Serial.println("Subscribed to " + mqtt_subscription);
+  debug_println("Subscribed to " + mqtt_subscription);
 
   MqttDiscovery();
 }
@@ -443,7 +444,7 @@ void OnMqttMessage(char *topic, char *payload,
           layout->text().EnableScrolling();
         }
       } else {
-        Serial.println("missing key 'text'");
+        debug_println("missing key 'text'");
       }
     } else if (str_topic == mqtt_node_topic + "/display") {
       if (json.containsKey("enabled")) {
@@ -468,17 +469,17 @@ void OnMqttMessage(char *topic, char *payload,
     } else if (str_topic == mqtt_node_topic + "/ready") {
       // Ignore our own messages
     } else {
-      Serial.print("Unknown topic: ");
-      Serial.println(topic);
+      debug_print("Unknown topic: ");
+      debug_println(topic);
     }
   } else {
-    Serial.print("failed to parse json payload: ");
-    Serial.println(deserialize_error.c_str());
+    debug_print("failed to parse json payload: ");
+    debug_println(deserialize_error.c_str());
   }
 }
 
 void OnMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  Serial.println("Disconnected from MQTT.");
+  debug_println("Disconnected from MQTT.");
 
   xTimerStart(mqtt_reconnect_timer, 0);
 }
@@ -490,8 +491,8 @@ void InitMqtt() {
   const char *mqtt_user = config.StringValue("mqtt_user");
   const char *mqtt_pass = config.StringValue("mqtt_pass");
 
-  Serial.printf("MQTT: host=%s user=%s port=%d\n", mqtt_host, mqtt_user,
-                config.IntValue("mqtt_port"));
+  debug_printf("MQTT: host=%s user=%s port=%d\n", mqtt_host, mqtt_user,
+               config.IntValue("mqtt_port"));
 
   mqtt_reconnect_timer =
       xTimerCreate("mqtt_timer", pdMS_TO_TICKS(2000), pdFALSE, (void *)0,
@@ -642,7 +643,7 @@ void RebootIfDisconnected(byte &disconnect_count) {
   if (WiFi.status() == WL_DISCONNECTED &&
       wm->getConfigPortalActive() == false) {
     disconnect_count++;
-    Serial.println(String("WL_DISCONNECTED count: ") + disconnect_count);
+    debug_println(String("WL_DISCONNECTED count: ") + disconnect_count);
     if (disconnect_count > 1) {
       layout->text().ShowStaticText("DISCONNECTED");
       delay(3000);
@@ -659,7 +660,7 @@ void CheckForStartup() {
       WiFi.status() == WL_CONNECTED) {
     is_connected = true;
     config_mode = false;
-    Serial.println("Starting up");
+    debug_println("Starting up");
 
     InitMain();
   }
@@ -670,8 +671,8 @@ void setup() {
 
   pinMode(kResetPin, INPUT_PULLUP);
 
-  Serial.begin(115200);
-  Serial.setDebugOutput(true);
+  debug_begin(115200);
+  debug_setDebugOutput(true);
 
   InitLEDs();
 
@@ -699,9 +700,9 @@ void setup() {
 
   SetupWiFiManager();
 
-  Serial.println("Connecting to WiFi...");
+  debug_println("Connecting to WiFi...");
   bool res = wm->autoConnect(kSetupAp);
-  Serial.println(res ? "Connected" : "Connection failed");
+  debug_println(res ? "Connected" : "Connection failed");
 
   InitTime();
 
@@ -754,7 +755,7 @@ void loop() {
       RemoveClock();
       layout->text().ShowScrollText("CONFIG: http://" +
                                     WiFi.localIP().toString());
-      Serial.println("Enter WebPortal");
+      debug_println("Enter WebPortal");
       server.end();
       wm->setParamsPage(true);
       wm->startWebPortal();
