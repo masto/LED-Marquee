@@ -727,9 +727,7 @@ void loop() {
     } else {
       FastLED.clear(true);
     }
-  }
-
-  if (enable_clock) {
+  } else if (enable_clock) {
     EVERY_N_SECONDS(1) {
       clock_hue++;
       SetClockColor();
