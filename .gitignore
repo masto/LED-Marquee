@@ -2,6 +2,7 @@ platformio.ini
 platformio.ini-*
 include/marquee_config.h
 include/marquee_config.h-*
+mqtt_client_examples/.venv
 .pio
 .vscode
 TODO
