@@ -54,8 +54,8 @@ const char* kNtpServer = "pool.ntp.org";
 // Access point to create for initial setup
 const char* kSetupAp = "LEDSetupAP";
 
-// Pixel width of the clock section (0 to disable)
-constexpr uint8_t kClockWidth = 50;
+// Pixel width of the clock section (e.g. 50; 0 to disable)
+constexpr uint8_t kClockWidth = 0;
 
 // Fonts for text scroller and clock
 constexpr const uint8_t* kTextFont = ClassicFontData;
