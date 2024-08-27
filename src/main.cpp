@@ -282,9 +282,6 @@ void SetupWiFiManager() {
 void SetClockColor() { layout->clock().SetColorHsv(clock_hue, 0xff, 0xff); }
 
 void InitLEDs() {
-  constexpr int kSectionWidth = kPanelWidth * kPanelsPerSection;
-  constexpr int kMarqueeWidth = kSectionWidth * kMarqueeSections;
-
   display_manager =
       led_marquee::DisplayManager::Create<CHIPSET, kLedPins, kColorOrder>(
           kMarqueeSections, kSectionWidth, kPanelHeight,

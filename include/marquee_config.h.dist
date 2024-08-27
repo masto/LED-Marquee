@@ -40,6 +40,10 @@ constexpr int kMarqueeSections = 1;
 static_assert(kMarqueeSections < 4,
               "Extend led_marquee::DisplayManager to support more sections");
 
+// Calculated from the above
+constexpr int kSectionWidth = kPanelWidth * kPanelsPerSection;
+constexpr int kMarqueeWidth = kSectionWidth * kMarqueeSections;
+
 // Set to true if "data in" is on the rightmost end of your marquee.
 constexpr bool kReverseDirection = true;
 
@@ -56,6 +60,8 @@ const char* kSetupAp = "LEDSetupAP";
 
 // Pixel width of the clock section (e.g. 50; 0 to disable)
 constexpr uint8_t kClockWidth = 0;
+static_assert(kClockWidth < kMarqueeWidth,
+              "Clock width must be less than the marquee width");
 
 // Fonts for text scroller and clock
 constexpr const uint8_t* kTextFont = ClassicFontData;
