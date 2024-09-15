@@ -39,13 +39,12 @@ extern "C" {
 #include "freertos/timers.h"
 }
 
-#include "clock.h"
 #include "debug_serial.h"
 #include "display_manager.h"
 #include "marquee_config.h"
 #include "text_layout.h"
 #include "text_scroller.h"
-#include "text_with_clock_layout.h"
+#include "text_with_life_layout.h"
 #include "user_config.h"
 
 typedef const char *FsLabel;
@@ -57,16 +56,18 @@ std::shared_ptr<WiFiManager> wm = std::make_shared<WiFiManager>();
 AsyncWebServer server(80);
 AsyncMqttClient mqtt_client;
 CEveryNMillis *scroll_timer;
+CEveryNMillis *life_timer;
 TimerHandle_t mqtt_reconnect_timer;
 std::unique_ptr<fs::SPIFFSFS> web_fs;
 std::shared_ptr<led_marquee::DisplayManager> display_manager;
-std::unique_ptr<led_marquee::TextWithClockLayout> layout;
+std::unique_ptr<led_marquee::TextWithLifeLayout> layout;
 
-uint8_t clock_hue = 0;
 unsigned int scroll_speed = 40;
+unsigned int life_speed = 60;
 bool is_connected = false;
 bool enable_display = true;
-bool enable_clock = kClockWidth > 0;
+bool enable_life = kLifeWidth > 0;
+bool enable_text = kLifeWidth < kMarqueeWidth - 1;
 bool enable_ota = false;
 bool config_mode = false;
 bool should_save_config = false;
@@ -129,13 +130,16 @@ void AnimateScroller() {
   }
 }
 
+void AnimateLife() { layout->life().Animate(); }
+
 // Resets the layout to use the full display for text. This is intended for
 // things like entering configuration mode: there is no returning to normal
 // without rebooting.
-void RemoveClock() {
-  enable_clock = false;
-  layout = std::make_unique<led_marquee::TextWithClockLayout>(
-      *display_manager, kTextFont, 0, kClockFont);
+void RemoveLife() {
+  enable_life = false;
+  enable_text = true;
+  layout = std::make_unique<led_marquee::TextWithLifeLayout>(*display_manager,
+                                                             kTextFont, 0);
 }
 
 // Mount a SPIFFS filesystem
@@ -170,23 +174,23 @@ void CheckForResetConfig() {
     delay(50);
     if (digitalRead(kResetPin) == LOW) {
       // "CLEAR?" is too long for one panel :-(
-      layout->text().ShowStaticText("CLR?");
+      if (enable_text) layout->text().ShowStaticText("CLR?");
       delay(1000);
 
       if (digitalRead(kResetPin) != LOW) return;
-      layout->text().ShowStaticText("CLR?3");
+      if (enable_text) layout->text().ShowStaticText("CLR?3");
       delay(1000);
 
       if (digitalRead(kResetPin) != LOW) return;
-      layout->text().ShowStaticText("CLR?2");
+      if (enable_text) layout->text().ShowStaticText("CLR?2");
       delay(1000);
 
       if (digitalRead(kResetPin) != LOW) return;
-      layout->text().ShowStaticText("CLR?1");
+      if (enable_text) layout->text().ShowStaticText("CLR?1");
       delay(1000);
 
       if (digitalRead(kResetPin) == LOW) {
-        layout->text().ShowStaticText("CLR!");
+        if (enable_text) layout->text().ShowStaticText("CLR!");
         debug_println("Clearing settings");
         // Reset WiFiManager config
         wm->resetSettings();
@@ -213,7 +217,7 @@ void SaveParamsCallback() {
 // When WiFiManager enters configuration mode, display a prompt
 void ConfigModeCallback(WiFiManager *myWiFiManager) {
   config_mode = true;
-  RemoveClock();
+  RemoveLife();
 
   layout->text().ShowScrollText(
       "Connect to " + myWiFiManager->getConfigPortalSSID() + " to configure.");
@@ -279,8 +283,6 @@ void SetupWiFiManager() {
   wm->setConfigPortalTimeout(300);
 }
 
-void SetClockColor() { layout->clock().SetColorHsv(clock_hue, 0xff, 0xff); }
-
 void InitLEDs() {
   display_manager =
       led_marquee::DisplayManager::Create<CHIPSET, kLedPins, kColorOrder>(
@@ -293,11 +295,10 @@ void InitLEDs() {
   display_manager->SetMaxPower(kLedVolts, 1000.0 * kLedMaxAmps);
   display_manager->SetBrightness(15);
 
-  layout = std::make_unique<led_marquee::TextWithClockLayout>(
-      *display_manager, kTextFont, kClockWidth, kClockFont);
+  layout = std::make_unique<led_marquee::TextWithLifeLayout>(
+      *display_manager, kTextFont, kLifeWidth);
 
   layout->text().SetMaxLength(kMaxMessageLen);
-  SetClockColor();
 }
 
 // Save config to filesystem. And then reboot to ensure clean initialization.
@@ -426,11 +427,11 @@ void OnMqttMessage(char *topic, char *payload,
       if (json.containsKey("brightness")) {
         display_manager->SetBrightness(json["brightness"]);
       }
-      if (json.containsKey("color")) {
+      if (json.containsKey("color") && enable_text) {
         layout->text().SetColorRgb(json["color"]["r"], json["color"]["g"],
                                    json["color"]["b"]);
       }
-    } else if (str_topic == mqtt_node_topic + "/text") {
+    } else if (str_topic == mqtt_node_topic + "/text" && enable_text) {
       if (json.containsKey("text")) {
         const std::string text = led_marquee::Interpolate(json["text"]);
         const String str(text.data(), text.length());
@@ -451,13 +452,18 @@ void OnMqttMessage(char *topic, char *payload,
         scroll_speed = json["speed"];
         scroll_timer->setPeriod(scroll_speed);
       }
-      if (json.containsKey("color")) {
+      if (json.containsKey("color") && enable_text) {
         String rgb = json["color"];
         unsigned long rgbl = strtoul(rgb.c_str(), NULL, 16);
         uint8_t b = rgbl & 0xff;
         uint8_t g = (rgbl >> 8) & 0xff;
         uint8_t r = (rgbl >> 16) & 0xff;
         layout->text().SetColorRgb(r, g, b);
+      }
+    } else if (str_topic == mqtt_node_topic + "/life") {
+      if (json.containsKey("speed")) {
+        life_speed = json["speed"];
+        life_timer->setPeriod(life_speed);
       }
     } else if (str_topic == mqtt_node_topic + "/ota") {
       if (json.containsKey("enabled")) {
@@ -511,10 +517,12 @@ void InitWebServer() {
 
   server.on("/text", HTTP_POST, [](AsyncWebServerRequest *request) {
     if (auto param_text = request->getParam("text", true)) {
-      if (request->getParam("do_queue", true))
-        scroll_next = param_text->value();
-      else
-        layout->text().ShowScrollText(param_text->value());
+      if (enable_text) {
+        if (request->getParam("do_queue", true))
+          scroll_next = param_text->value();
+        else
+          layout->text().ShowScrollText(param_text->value());
+      }
     }
 
     request->redirect("/");
@@ -522,13 +530,15 @@ void InitWebServer() {
 
   server.on("/color", HTTP_POST, [](AsyncWebServerRequest *request) {
     if (auto param_color = request->getParam("color", true)) {
-      String color = param_color->value();
-      if (color.length() == 7) {
-        unsigned long rgbl = strtoul(color.c_str() + 1, NULL, 16);
-        uint8_t b = rgbl & 0xff;
-        uint8_t g = (rgbl >> 8) & 0xff;
-        uint8_t r = (rgbl >> 16) & 0xff;
-        layout->text().SetColorRgb(r, g, b);
+      if (enable_text) {
+        String color = param_color->value();
+        if (color.length() == 7) {
+          unsigned long rgbl = strtoul(color.c_str() + 1, NULL, 16);
+          uint8_t b = rgbl & 0xff;
+          uint8_t g = (rgbl >> 8) & 0xff;
+          uint8_t r = (rgbl >> 16) & 0xff;
+          layout->text().SetColorRgb(r, g, b);
+        }
       }
     }
 
@@ -567,7 +577,7 @@ void InitMain() {
 
   InitMqtt();
 
-  layout->text().ShowScrollText(kStartupMessage);
+  if (enable_text) layout->text().ShowScrollText(kStartupMessage);
 }
 
 void InitArduinoOTA() {
@@ -642,7 +652,7 @@ void RebootIfDisconnected(byte &disconnect_count) {
     disconnect_count++;
     debug_println(String("WL_DISCONNECTED count: ") + disconnect_count);
     if (disconnect_count > 1) {
-      layout->text().ShowStaticText("DISCONNECTED");
+      if (enable_text) layout->text().ShowStaticText("DISCONNECTED");
       delay(3000);
       ESP.restart();
     }
@@ -675,7 +685,7 @@ void setup() {
 
   CheckForResetConfig();
 
-  layout->text().ShowStaticText("START");
+  if (enable_text) layout->text().ShowStaticText("START");
 
   config.AddParam("hostname", "mDNS hostname", "", 63);
   config.AddHtml("<hr /><p>Leave MQTT host blank to disable MQTT.</p>");
@@ -694,6 +704,7 @@ void setup() {
   LoadUserConfig();
 
   scroll_timer = new CEveryNMillis(scroll_speed);
+  life_timer = new CEveryNMillis(life_speed);
 
   SetupWiFiManager();
 
@@ -717,25 +728,22 @@ void loop() {
   // Run asynchronous OTA receiver
   if (enable_ota) ArduinoOTA.handle();
 
-  // Do the scrolling
-  if (*scroll_timer) {
-    if (enable_display) {
-      AnimateScroller();
-      FastLED.show();
-    } else {
-      FastLED.clear(true);
-    }
-  } else if (enable_clock) {
-    EVERY_N_SECONDS(1) {
-      clock_hue++;
-      SetClockColor();
+  // Update display elements
+  bool updated = false;
+  if (enable_text && *scroll_timer) {
+    AnimateScroller();
+    updated = true;
+  } else if (enable_life && *life_timer) {
+    AnimateLife();
+    updated = true;
+  }
 
-      time_t now = time(NULL);
-      tm *timeinfo = localtime(&now);
-      char t[40];
-      strftime(t, sizeof(t), "%l:%M:%S", timeinfo);
-      layout->clock().SetText(t);
+  if (enable_display) {
+    if (updated) {
+      FastLED.show();
     }
+  } else {
+    FastLED.clear(true);
   }
 
   // Periodic housekeeping. Run every 5 seconds to not waste CPU.
@@ -749,7 +757,7 @@ void loop() {
     delay(50);
     if (digitalRead(kResetPin) == LOW) {
       config_mode = true;
-      RemoveClock();
+      RemoveLife();
       layout->text().ShowScrollText("CONFIG: http://" +
                                     WiFi.localIP().toString());
       debug_println("Enter WebPortal");

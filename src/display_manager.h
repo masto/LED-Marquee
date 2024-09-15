@@ -68,6 +68,8 @@ class DisplayManager {
   };
 
   int GetWidth() const { return leds_->Width(); };
+  int GetHeight() const { return leds_->Height(); };
+  std::shared_ptr<cLEDMatrixBase> Leds() { return leds_; };
 
   bool IsEnabled() const { return enable_display_; };
   void Enable() { enable_display_ = true; };
@@ -83,7 +85,7 @@ class DisplayManager {
 
  private:
   DisplayManager(std::shared_ptr<cLEDMatrixBase> leds, bool enable_display)
-      : leds_(leds), enable_display_(enable_display){};
+      : leds_(leds), enable_display_(enable_display) {};
 
   std::shared_ptr<cLEDMatrixBase> leds_;
   bool enable_display_ = true;
