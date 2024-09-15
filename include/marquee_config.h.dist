@@ -63,6 +63,11 @@ constexpr uint8_t kClockWidth = 0;
 static_assert(kClockWidth < kMarqueeWidth,
               "Clock width must be less than the marquee width");
 
+// Pixel width of the life section (0 to disable)
+constexpr uint8_t kLifeWidth = kMarqueeWidth;
+static_assert(kLifeWidth <= kMarqueeWidth,
+              "Life width must be less than or equal to the marquee width");
+
 // Fonts for text scroller and clock
 constexpr const uint8_t* kTextFont = ClassicFontData;
 constexpr const uint8_t* kClockFont = MatriseFontData;
