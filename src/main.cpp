@@ -40,13 +40,14 @@ extern "C" {
 #include "freertos/timers.h"
 }
 
+#include "clock.h"
 #include "debug_serial.h"
 #include "display_manager.h"
+#include "life_with_clock_layout.h"
 #include "marquee_config.h"
 #include "system_health.h"
 #include "text_layout.h"
 #include "text_scroller.h"
-#include "text_with_life_layout.h"
 #include "user_config.h"
 
 // How long the loop can stall before the task watchdog resets the chip.
@@ -126,14 +127,16 @@ CEveryNMillis* life_timer;
 TimerHandle_t mqtt_reconnect_timer;
 std::unique_ptr<fs::SPIFFSFS> web_fs;
 std::shared_ptr<led_marquee::DisplayManager> display_manager;
-std::unique_ptr<led_marquee::TextWithLifeLayout> layout;
+std::unique_ptr<led_marquee::LifeWithClockLayout> layout;
 
+uint8_t clock_hue = 0;
 unsigned int scroll_speed = 40;
 unsigned int life_speed = 60;
 bool is_connected = false;
 bool enable_display = true;
-bool enable_life = kLifeWidth > 0;
-bool enable_text = kLifeWidth < kMarqueeWidth - 1;
+bool enable_clock = kClockWidth > 0;
+bool enable_life = kClockWidth < kMarqueeWidth;
+bool enable_text = false;
 bool enable_ota = false;
 bool config_mode = false;
 bool should_save_config = false;
@@ -225,9 +228,10 @@ void AnimateLife() { layout->life().Animate(); }
 // without rebooting.
 void RemoveLife() {
   enable_life = false;
+  enable_clock = false;
   enable_text = true;
-  layout = std::make_unique<led_marquee::TextWithLifeLayout>(*display_manager,
-                                                             kTextFont, 0);
+  layout = std::make_unique<led_marquee::LifeWithClockLayout>(
+      *display_manager, kTextFont, 0, kClockFont, kMarqueeWidth);
 }
 
 // Publish a snapshot of everything relevant to "what state is the marquee
@@ -282,6 +286,7 @@ void PublishDiag(const char* event, const char* keep_as = nullptr) {
   // which ArduinoJson would emit verbatim and which aren't valid UTF-8, so
   // keep only printable ASCII.
   doc["display_on"] = enable_display;
+  doc["clock"] = enable_clock;
   doc["life"] = enable_life;
   doc["text_enabled"] = enable_text;
   String text;
@@ -482,6 +487,8 @@ void SetupWiFiManager() {
   wm->setConfigPortalTimeout(300);
 }
 
+void SetClockColor() { layout->clock().SetColorHsv(clock_hue, 0xff, 0xff); }
+
 void InitLEDs() {
   display_manager =
       led_marquee::DisplayManager::Create<CHIPSET, kLedPins, kColorOrder>(
@@ -494,10 +501,11 @@ void InitLEDs() {
   display_manager->SetMaxPower(kLedVolts, 1000.0 * kLedMaxAmps);
   display_manager->SetBrightness(15);
 
-  layout = std::make_unique<led_marquee::TextWithLifeLayout>(
-      *display_manager, kTextFont, kLifeWidth);
+  layout = std::make_unique<led_marquee::LifeWithClockLayout>(
+      *display_manager, kTextFont, kClockWidth, kClockFont);
 
   layout->text().SetMaxLength(kMaxMessageLen);
+  SetClockColor();
 }
 
 // Save config to filesystem. And then reboot to ensure clean initialization.
@@ -1183,6 +1191,18 @@ void loop() {
       FastLED.show();
     } else {
       FastLED.clear(true);
+    }
+  } else if (enable_clock) {
+    EVERY_N_SECONDS(1) {
+      StateLock lock;
+      clock_hue++;
+      SetClockColor();
+
+      time_t now = time(NULL);
+      tm* timeinfo = localtime(&now);
+      char t[40];
+      strftime(t, sizeof(t), "%l:%M", timeinfo);
+      layout->clock().SetText(t);
     }
   }
 
