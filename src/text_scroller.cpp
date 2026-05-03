@@ -43,11 +43,12 @@ void TextScroller::Init(const int width, const int height, const int x,
   display_manager_.InitLedText(led_text_, width, height, x, y);
 
   std::size_t num_spaces = 1 + width / (led_text_.FontWidth() + 1);
-  char* buf = new char[num_spaces + 1];
-  memset(buf, ' ', num_spaces);
+  // Build a string of spaces wide enough to scroll the display blank.
+  std::unique_ptr<char[]> buf(new char[num_spaces + 1]);
+  memset(buf.get(), ' ', num_spaces);
   buf[num_spaces] = '\0';
 
-  spaces_ = buf;
+  spaces_ = buf.get();
 }
 
 void TextScroller::SetColorRgb(uint8_t r, uint8_t g, uint8_t b) {

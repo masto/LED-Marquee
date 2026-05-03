@@ -36,6 +36,7 @@
 
 extern "C" {
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/timers.h"
 }
 
@@ -43,10 +44,48 @@ extern "C" {
 #include "debug_serial.h"
 #include "display_manager.h"
 #include "marquee_config.h"
+#include "system_health.h"
 #include "text_layout.h"
 #include "text_scroller.h"
 #include "text_with_clock_layout.h"
 #include "user_config.h"
+
+// How long the loop can stall before the task watchdog resets the chip.
+// FastLED.show() blocks while clocking out pixels (which is fairly quick)
+// and AsyncMqttClient/AsyncWebServer callbacks can briefly hold the state
+// mutex, so 30s is comfortably above any expected normal stall.
+constexpr uint32_t kWatchdogTimeoutSec = 30;
+
+// Shared-state mutex.
+//
+// The marquee has three threads of execution that all touch display state and
+// shared variables: the Arduino main loop, the AsyncTCP task (which fires
+// AsyncWebServer and AsyncMqttClient callbacks), and the FreeRTOS timer task
+// (which fires the MQTT reconnect timer). Without serialization, two threads
+// can simultaneously mutate `String scroll_next` (heap allocation), reconfigure
+// the cLEDText state machine, or call FastLED.show() while another caller is
+// repainting the buffer. That's a real source of intermittent crashes.
+//
+// We use a single recursive-ish protection pattern: any code that touches
+// shared state (animation, scroll_next, layout->text() mutating calls,
+// FastLED.show()) takes this mutex first. Critical sections are short.
+SemaphoreHandle_t g_state_mutex = nullptr;
+
+// RAII helper for the state mutex.
+class StateLock {
+ public:
+  StateLock() {
+    if (g_state_mutex) xSemaphoreTake(g_state_mutex, portMAX_DELAY);
+  }
+  ~StateLock() {
+    if (g_state_mutex) xSemaphoreGive(g_state_mutex);
+  }
+  StateLock(const StateLock&) = delete;
+  StateLock& operator=(const StateLock&) = delete;
+};
+
+// Pending crash report, published once MQTT comes up.
+String pending_crash_report;
 
 typedef const char* FsLabel;
 const FsLabel kUserFsLabel = "/user";
@@ -197,6 +236,7 @@ void CheckForResetConfig() {
           fs->format();
         }
         delay(1000);
+        led_marquee::NoteCleanRestart();
         wm->reboot();
       }
     }
@@ -231,6 +271,7 @@ void WmWebServerCallback() {
                            "no-cache, no-store, must-revalidate");
     wm->server->send(200, "text/plain", "Bye!");
     delay(1000);
+    led_marquee::NoteCleanRestart();
     wm->reboot();
   });
 }
@@ -322,6 +363,7 @@ void SaveConfigAndRestart() {
   }
 
   delay(1000);
+  led_marquee::NoteCleanRestart();
   ESP.restart();
 }
 
@@ -398,6 +440,7 @@ void MqttDiscovery() {
 
 void OnMqttConnect(bool sessionPresent) {
   debug_println("Connected to MQTT");
+  led_marquee::SetBreadcrumb("mqtt_connect");
 
   mqtt_node_topic = String(kMqttPrefix) + "/" + config.StringValue("mqtt_node");
   mqtt_command_topic = mqtt_node_topic + "/set";
@@ -408,15 +451,65 @@ void OnMqttConnect(bool sessionPresent) {
   debug_println("Subscribed to " + mqtt_subscription);
 
   MqttDiscovery();
+
+  // Publish a status payload describing this boot, including any crash report
+  // from the previous run. Topic: <prefix>/<node>/status, retained so a
+  // subscriber that connects later still gets the most recent boot info.
+  {
+    StaticJsonDocument<384> status;
+    status["boot"] = led_marquee::GetBootCount();
+    status["uptime_s"] = millis() / 1000UL;
+    status["free_heap"] = ESP.getFreeHeap();
+    status["min_free_heap"] = ESP.getMinFreeHeap();
+    status["ip"] = WiFi.localIP().toString();
+    status["rssi"] = WiFi.RSSI();
+    if (pending_crash_report.length()) {
+      status["crash"] = pending_crash_report;
+    }
+    String status_payload;
+    serializeJson(status, status_payload);
+    String status_topic = mqtt_node_topic + "/status";
+    mqtt_client.publish(status_topic.c_str(), 0, true, status_payload.c_str());
+
+    // Also publish the crash report on its own topic for easier retrieval /
+    // alerting. Retained, but cleared on next clean boot.
+    String crash_topic = mqtt_node_topic + "/crashlog";
+    if (pending_crash_report.length()) {
+      mqtt_client.publish(crash_topic.c_str(), 0, true,
+                          pending_crash_report.c_str());
+    } else {
+      // Clear the retained crash log so HA / dashboards don't keep showing
+      // stale info after a clean boot.
+      mqtt_client.publish(crash_topic.c_str(), 0, true, "");
+    }
+    pending_crash_report = "";
+  }
 }
 
 void OnMqttMessage(char* topic, char* payload,
                    AsyncMqttClientMessageProperties properties, size_t len,
                    size_t index, size_t total) {
+  // AsyncMqttClient may deliver large messages in multiple fragments. We don't
+  // attempt to reassemble; for the small JSON commands we expect, a single
+  // fragment should always be enough. Skip anything else.
+  (void)properties;
+  if (index != 0 || len != total) {
+    debug_printf("Skipping fragmented MQTT message (len=%u total=%u)\n",
+                 (unsigned)len, (unsigned)total);
+    return;
+  }
+
   String str_topic = String(topic);
 
+  // payload is NOT guaranteed to be null-terminated in AsyncMqttClient; pass
+  // the explicit length so ArduinoJson doesn't read past the buffer end.
   DynamicJsonDocument json(1024);
-  auto deserialize_error = deserializeJson(json, payload);
+  auto deserialize_error = deserializeJson(json, payload, len);
+
+  // All mutations below touch shared state (display config, scroll_next,
+  // FastLED) that the main loop also reads/writes. Serialize via the
+  // shared-state mutex.
+  StateLock lock;
   if (!deserialize_error) {
     if (str_topic == mqtt_command_topic) {
       // Home Assistant-style commands
@@ -509,46 +602,56 @@ void InitTime() { configTzTime(kTimeZone, kNtpServer); }
 void InitWebServer() {
   server.serveStatic("/", *web_fs, "/www/").setDefaultFile("index.html");
 
+  // All these handlers run on the AsyncTCP task; take the state mutex while
+  // mutating display state shared with the main loop.
   server.on("/text", HTTP_POST, [](AsyncWebServerRequest* request) {
-    if (auto param_text = request->getParam("text", true)) {
-      if (request->getParam("do_queue", true))
-        scroll_next = param_text->value();
-      else
-        layout->text().ShowScrollText(param_text->value());
+    {
+      StateLock lock;
+      if (auto param_text = request->getParam("text", true)) {
+        if (request->getParam("do_queue", true))
+          scroll_next = param_text->value();
+        else
+          layout->text().ShowScrollText(param_text->value());
+      }
     }
-
     request->redirect("/");
   });
 
   server.on("/color", HTTP_POST, [](AsyncWebServerRequest* request) {
-    if (auto param_color = request->getParam("color", true)) {
-      String color = param_color->value();
-      if (color.length() == 7) {
-        unsigned long rgbl = strtoul(color.c_str() + 1, NULL, 16);
-        uint8_t b = rgbl & 0xff;
-        uint8_t g = (rgbl >> 8) & 0xff;
-        uint8_t r = (rgbl >> 16) & 0xff;
-        layout->text().SetColorRgb(r, g, b);
+    {
+      StateLock lock;
+      if (auto param_color = request->getParam("color", true)) {
+        String color = param_color->value();
+        if (color.length() == 7) {
+          unsigned long rgbl = strtoul(color.c_str() + 1, NULL, 16);
+          uint8_t b = rgbl & 0xff;
+          uint8_t g = (rgbl >> 8) & 0xff;
+          uint8_t r = (rgbl >> 16) & 0xff;
+          layout->text().SetColorRgb(r, g, b);
+        }
       }
     }
-
     request->redirect("/");
   });
 
   server.on("/brightness", HTTP_POST, [](AsyncWebServerRequest* request) {
-    if (auto param_brightness = request->getParam("brightness", true)) {
-      display_manager->SetBrightness(param_brightness->value().toInt());
+    {
+      StateLock lock;
+      if (auto param_brightness = request->getParam("brightness", true)) {
+        display_manager->SetBrightness(param_brightness->value().toInt());
+      }
     }
-
     request->redirect("/");
   });
 
   server.on("/speed", HTTP_POST, [](AsyncWebServerRequest* request) {
-    if (auto param_speed = request->getParam("speed", true)) {
-      scroll_speed = param_speed->value().toInt();
-      scroll_timer->setPeriod(scroll_speed);
+    {
+      StateLock lock;
+      if (auto param_speed = request->getParam("speed", true)) {
+        scroll_speed = param_speed->value().toInt();
+        scroll_timer->setPeriod(scroll_speed);
+      }
     }
-
     request->redirect("/");
   });
 
@@ -630,20 +733,40 @@ void InitArduinoOTA() {
     ota_message.text().ShowStaticText(error_text);
 
     delay(5000);
+    led_marquee::NoteCleanRestart();
     ESP.restart();
   });
 
   ArduinoOTA.begin();
 }
 
+// If WiFi has been down for too long, reboot. WiFi failures can manifest as
+// any of WL_DISCONNECTED, WL_NO_SSID_AVAIL, WL_CONNECTION_LOST,
+// WL_IDLE_STATUS, or WL_CONNECT_FAILED, so we treat anything other than
+// WL_CONNECTED as a problem. The reboot fires only once we've been
+// disconnected for several checks in a row, to ride out brief blips.
+//
+// Runs every 5 seconds (from EVERY_N_SECONDS(5) in loop()), so a count
+// threshold of 3 means roughly 15 seconds of unbroken disconnection before we
+// reboot. We don't trigger before the initial connection has succeeded, so
+// the user has time to use the config portal on a brand-new device.
 void RebootIfDisconnected(byte& disconnect_count) {
-  if (WiFi.status() == WL_DISCONNECTED &&
-      wm->getConfigPortalActive() == false) {
+  if (!is_connected || wm->getConfigPortalActive()) {
+    disconnect_count = 0;
+    return;
+  }
+
+  wl_status_t status = WiFi.status();
+  if (status != WL_CONNECTED) {
     disconnect_count++;
-    debug_println(String("WL_DISCONNECTED count: ") + disconnect_count);
-    if (disconnect_count > 1) {
+    debug_println(String("WiFi not connected: status=") +
+                  static_cast<int>(status) +
+                  " count=" + static_cast<int>(disconnect_count));
+    if (disconnect_count > 3) {
+      debug_println("Rebooting due to sustained WiFi disconnection");
       layout->text().ShowStaticText("DISCONNECTED");
       delay(3000);
+      led_marquee::NoteCleanRestart();
       ESP.restart();
     }
   } else {
@@ -664,6 +787,16 @@ void CheckForStartup() {
 }
 
 void setup() {
+  // First thing: capture reset reason / crash log from the previous run.
+  // Anything that crashes after this point will be reported on next boot.
+  led_marquee::InitSystemHealth();
+  pending_crash_report = led_marquee::GetCrashReport();
+  led_marquee::SetBreadcrumb("setup");
+
+  // Create the shared-state mutex before any code path that could mutate
+  // shared state from another task (MQTT/HTTP callbacks, FreeRTOS timers).
+  g_state_mutex = xSemaphoreCreateMutex();
+
   WiFi.mode(WIFI_STA);  // explicitly set mode, esp defaults to STA+AP
 
   pinMode(kResetPin, INPUT_PULLUP);
@@ -704,10 +837,19 @@ void setup() {
   InitTime();
 
   InitArduinoOTA();
+
+  // Subscribe the loop task to the Task Watchdog Timer. From here on, if
+  // loop() doesn't run for kWatchdogTimeoutSec, the chip resets.
+  led_marquee::InitWatchdog(kWatchdogTimeoutSec);
+  led_marquee::SetBreadcrumb("setup_done");
 }
 
 void loop() {
   static byte disconnectCount = 0;
+
+  // Pet the watchdog every iteration. If we hang anywhere in loop() or in a
+  // call from loop(), no reset means trouble.
+  led_marquee::FeedWatchdog();
 
   // Run asynchronous WiFi Manager
   if (config_mode == true || is_connected == false) wm->process();
@@ -717,8 +859,11 @@ void loop() {
   // Run asynchronous OTA receiver
   if (enable_ota) ArduinoOTA.handle();
 
-  // Do the scrolling
+  // Do the scrolling. Hold the state mutex for the duration of an animate +
+  // show cycle so MQTT / HTTP callbacks can't reconfigure the cLEDText state
+  // machine or repaint pixels mid-flight.
   if (*scroll_timer) {
+    StateLock lock;
     if (enable_display) {
       AnimateScroller();
       FastLED.show();
@@ -727,6 +872,7 @@ void loop() {
     }
   } else if (enable_clock) {
     EVERY_N_SECONDS(1) {
+      StateLock lock;
       clock_hue++;
       SetClockColor();
 
@@ -742,6 +888,12 @@ void loop() {
   EVERY_N_SECONDS(5) {
     RebootIfDisconnected(disconnectCount);
     CheckForStartup();
+    // Update the breadcrumb periodically so a crash report includes a recent
+    // sense of where we were and a heap snapshot.
+    char crumb[64];
+    snprintf(crumb, sizeof(crumb), "loop ip=%s heap=%u",
+             WiFi.localIP().toString().c_str(), (unsigned)ESP.getFreeHeap());
+    led_marquee::SetBreadcrumb(crumb);
   }
 
   // If reset pin is pulled low during operation, enter WiFi Manager config
