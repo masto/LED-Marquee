@@ -48,7 +48,7 @@ extern "C" {
 #include "text_with_clock_layout.h"
 #include "user_config.h"
 
-typedef const char *FsLabel;
+typedef const char* FsLabel;
 const FsLabel kUserFsLabel = "/user";
 const FsLabel kSpiffsFsLabel = "/spiffs";
 const String kConfigFileName = "/config.json";
@@ -56,7 +56,7 @@ const String kConfigFileName = "/config.json";
 std::shared_ptr<WiFiManager> wm = std::make_shared<WiFiManager>();
 AsyncWebServer server(80);
 AsyncMqttClient mqtt_client;
-CEveryNMillis *scroll_timer;
+CEveryNMillis* scroll_timer;
 TimerHandle_t mqtt_reconnect_timer;
 std::unique_ptr<fs::SPIFFSFS> web_fs;
 std::shared_ptr<led_marquee::DisplayManager> display_manager;
@@ -150,7 +150,7 @@ std::unique_ptr<fs::SPIFFSFS> GetFileSystem(const FsLabel label) {
 }
 
 // Dump the filesystem contents, for debugging
-void PrintFileList(fs::SPIFFSFS &fs) {
+void PrintFileList(fs::SPIFFSFS& fs) {
   File root = fs.open("/");
   File file = root.openNextFile();
   while (file) {
@@ -211,7 +211,7 @@ void SaveParamsCallback() {
 }
 
 // When WiFiManager enters configuration mode, display a prompt
-void ConfigModeCallback(WiFiManager *myWiFiManager) {
+void ConfigModeCallback(WiFiManager* myWiFiManager) {
   config_mode = true;
   RemoveClock();
 
@@ -410,7 +410,7 @@ void OnMqttConnect(bool sessionPresent) {
   MqttDiscovery();
 }
 
-void OnMqttMessage(char *topic, char *payload,
+void OnMqttMessage(char* topic, char* payload,
                    AsyncMqttClientMessageProperties properties, size_t len,
                    size_t index, size_t total) {
   String str_topic = String(topic);
@@ -482,17 +482,17 @@ void OnMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
 }
 
 void InitMqtt() {
-  const char *mqtt_host = config.StringValue("mqtt_host");
+  const char* mqtt_host = config.StringValue("mqtt_host");
   if (!strlen(mqtt_host)) return;
 
-  const char *mqtt_user = config.StringValue("mqtt_user");
-  const char *mqtt_pass = config.StringValue("mqtt_pass");
+  const char* mqtt_user = config.StringValue("mqtt_user");
+  const char* mqtt_pass = config.StringValue("mqtt_pass");
 
   debug_printf("MQTT: host=%s user=%s port=%d\n", mqtt_host, mqtt_user,
                config.IntValue("mqtt_port"));
 
   mqtt_reconnect_timer =
-      xTimerCreate("mqtt_timer", pdMS_TO_TICKS(2000), pdFALSE, (void *)0,
+      xTimerCreate("mqtt_timer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0,
                    reinterpret_cast<TimerCallbackFunction_t>(ConnectToMqtt));
 
   mqtt_client.onConnect(OnMqttConnect);
@@ -509,7 +509,7 @@ void InitTime() { configTzTime(kTimeZone, kNtpServer); }
 void InitWebServer() {
   server.serveStatic("/", *web_fs, "/www/").setDefaultFile("index.html");
 
-  server.on("/text", HTTP_POST, [](AsyncWebServerRequest *request) {
+  server.on("/text", HTTP_POST, [](AsyncWebServerRequest* request) {
     if (auto param_text = request->getParam("text", true)) {
       if (request->getParam("do_queue", true))
         scroll_next = param_text->value();
@@ -520,7 +520,7 @@ void InitWebServer() {
     request->redirect("/");
   });
 
-  server.on("/color", HTTP_POST, [](AsyncWebServerRequest *request) {
+  server.on("/color", HTTP_POST, [](AsyncWebServerRequest* request) {
     if (auto param_color = request->getParam("color", true)) {
       String color = param_color->value();
       if (color.length() == 7) {
@@ -535,7 +535,7 @@ void InitWebServer() {
     request->redirect("/");
   });
 
-  server.on("/brightness", HTTP_POST, [](AsyncWebServerRequest *request) {
+  server.on("/brightness", HTTP_POST, [](AsyncWebServerRequest* request) {
     if (auto param_brightness = request->getParam("brightness", true)) {
       display_manager->SetBrightness(param_brightness->value().toInt());
     }
@@ -543,7 +543,7 @@ void InitWebServer() {
     request->redirect("/");
   });
 
-  server.on("/speed", HTTP_POST, [](AsyncWebServerRequest *request) {
+  server.on("/speed", HTTP_POST, [](AsyncWebServerRequest* request) {
     if (auto param_speed = request->getParam("speed", true)) {
       scroll_speed = param_speed->value().toInt();
       scroll_timer->setPeriod(scroll_speed);
@@ -552,8 +552,8 @@ void InitWebServer() {
     request->redirect("/");
   });
 
-  server.onNotFound([](AsyncWebServerRequest *request) {
-    auto *response = request->beginResponse(*web_fs, "/www/404.html");
+  server.onNotFound([](AsyncWebServerRequest* request) {
+    auto* response = request->beginResponse(*web_fs, "/www/404.html");
     response->setCode(404);
     request->send(response);
   });
@@ -571,7 +571,7 @@ void InitMain() {
 }
 
 void InitArduinoOTA() {
-  const char *hostname = config.StringValue("hostname");
+  const char* hostname = config.StringValue("hostname");
   if (strlen(hostname)) ArduinoOTA.setHostname(hostname);
 
   ArduinoOTA.setPartitionLabel(&kSpiffsFsLabel[1]);
@@ -605,7 +605,7 @@ void InitArduinoOTA() {
   });
 
   ArduinoOTA.onError([](ota_error_t error) {
-    const char *error_text;
+    const char* error_text;
     switch (error) {
       case OTA_AUTH_ERROR:
         error_text = "OTA_AUTH_ERROR";
@@ -636,7 +636,7 @@ void InitArduinoOTA() {
   ArduinoOTA.begin();
 }
 
-void RebootIfDisconnected(byte &disconnect_count) {
+void RebootIfDisconnected(byte& disconnect_count) {
   if (WiFi.status() == WL_DISCONNECTED &&
       wm->getConfigPortalActive() == false) {
     disconnect_count++;
@@ -731,7 +731,7 @@ void loop() {
       SetClockColor();
 
       time_t now = time(NULL);
-      tm *timeinfo = localtime(&now);
+      tm* timeinfo = localtime(&now);
       char t[40];
       strftime(t, sizeof(t), "%l:%M:%S", timeinfo);
       layout->clock().SetText(t);

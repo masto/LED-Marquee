@@ -33,12 +33,12 @@ namespace led_marquee {
 // them and takes care of allocating storage and copying to/from JSON.
 class UserConfig {
  public:
-  UserConfig(const UserConfig &) = default;
-  UserConfig &operator=(const UserConfig &) = default;
+  UserConfig(const UserConfig&) = default;
+  UserConfig& operator=(const UserConfig&) = default;
 
-  explicit UserConfig(std::shared_ptr<WiFiManager> wm) : wm_(wm){};
+  explicit UserConfig(std::shared_ptr<WiFiManager> wm) : wm_(wm) {};
 
-  const char *StringValue(std::string param) const;
+  const char* StringValue(std::string param) const;
   const int IntValue(std::string param) const;
 
   void AddParam(const std::string name, const std::string desc,
@@ -46,8 +46,8 @@ class UserConfig {
   void AddHtml(const String html);
 
   void ReadFromWifiManager();
-  void ReadFromJson(const DynamicJsonDocument &json);
-  void ToJson(DynamicJsonDocument &json);
+  void ReadFromJson(const DynamicJsonDocument& json);
+  void ToJson(DynamicJsonDocument& json);
 
  private:
   struct UserParameter {

@@ -26,8 +26,8 @@
 
 namespace led_marquee {
 
-TextScroller::TextScroller(DisplayManager &display_manager,
-                           const uint8_t *font_data)
+TextScroller::TextScroller(DisplayManager& display_manager,
+                           const uint8_t* font_data)
     : display_manager_(display_manager) {
   led_text_.SetFont(font_data);
   led_text_.SetTextColrOptions(COLR_RGB | COLR_SINGLE, 0xff, 0xff, 0xff);
@@ -43,7 +43,7 @@ void TextScroller::Init(const int width, const int height, const int x,
   display_manager_.InitLedText(led_text_, width, height, x, y);
 
   std::size_t num_spaces = 1 + width / (led_text_.FontWidth() + 1);
-  char *buf = new char[num_spaces + 1];
+  char* buf = new char[num_spaces + 1];
   memset(buf, ' ', num_spaces);
   buf[num_spaces] = '\0';
 
@@ -64,7 +64,7 @@ void TextScroller::EnableScrolling() {
   }
 }
 
-void TextScroller::ShowStaticText(const String &text) {
+void TextScroller::ShowStaticText(const String& text) {
   scroll_mode_ = ScrollMode::kStatic;
 
   auto len = text.length();
@@ -81,14 +81,14 @@ void TextScroller::ShowStaticText(const String &text) {
   if (display_manager_.IsEnabled()) {
     EraseArea();
     led_text_.SetScrollDirection(SCROLL_LEFT);
-    led_text_.SetText((unsigned char *)message.c_str(), message.length());
+    led_text_.SetText((unsigned char*)message.c_str(), message.length());
     led_text_.UpdateText();
     FastLED.show();
   }
 }
 
 // `text` must be NULL-terminated
-void TextScroller::ShowScrollText(const String &text) {
+void TextScroller::ShowScrollText(const String& text) {
   scroll_mode_ = ScrollMode::kScrolling;
 
   auto len = text.length();
@@ -107,7 +107,7 @@ void TextScroller::ShowScrollText(const String &text) {
 
 void TextScroller::ShowScrollText() {
   led_text_.SetScrollDirection(SCROLL_LEFT);
-  led_text_.SetText((unsigned char *)scroll_buf_.c_str(), scroll_buf_.length());
+  led_text_.SetText((unsigned char*)scroll_buf_.c_str(), scroll_buf_.length());
 }
 
 void TextScroller::EraseArea() {

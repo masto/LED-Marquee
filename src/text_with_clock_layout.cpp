@@ -18,9 +18,9 @@
 
 namespace led_marquee {
 
-TextWithClockLayout::TextWithClockLayout(DisplayManager &display_manager,
-                                         const uint8_t *font, int clock_width,
-                                         const uint8_t *clock_font)
+TextWithClockLayout::TextWithClockLayout(DisplayManager& display_manager,
+                                         const uint8_t* font, int clock_width,
+                                         const uint8_t* clock_font)
     : display_manager_(display_manager),
       text_scroller_(display_manager, font),
       clock_(display_manager, clock_font) {

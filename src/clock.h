@@ -27,21 +27,21 @@ namespace led_marquee {
 
 class Clock {
  public:
-  Clock(DisplayManager &display_manager, const uint8_t *font_data);
+  Clock(DisplayManager& display_manager, const uint8_t* font_data);
 
-  Clock(const Clock &other) = default;
-  Clock &operator=(const Clock &other) = default;
+  Clock(const Clock& other) = default;
+  Clock& operator=(const Clock& other) = default;
 
   void Init(const int width, const int height, const int x, const int y);
 
   uint8_t FontHeight() { return led_text_.FontHeight(); };
 
   void SetColorHsv(uint8_t hue, uint8_t saturation, uint8_t value);
-  void SetText(const String &text);
+  void SetText(const String& text);
   void EraseArea();
 
  private:
-  DisplayManager &display_manager_;
+  DisplayManager& display_manager_;
   cLEDText led_text_;
 
   int width_, height_, x_, y_;

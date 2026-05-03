@@ -29,18 +29,18 @@ namespace led_marquee {
 
 class TextWithClockLayout {
  public:
-  TextWithClockLayout(DisplayManager &display_manager, const uint8_t *font,
-                      int clock_width, const uint8_t *clock_font);
+  TextWithClockLayout(DisplayManager& display_manager, const uint8_t* font,
+                      int clock_width, const uint8_t* clock_font);
 
   // Not copyable or movable
-  TextWithClockLayout(const TextWithClockLayout &) = delete;
-  TextWithClockLayout &operator=(const TextWithClockLayout &) = delete;
+  TextWithClockLayout(const TextWithClockLayout&) = delete;
+  TextWithClockLayout& operator=(const TextWithClockLayout&) = delete;
 
-  TextScroller &text() { return text_scroller_; };
-  Clock &clock() { return clock_; };
+  TextScroller& text() { return text_scroller_; };
+  Clock& clock() { return clock_; };
 
  private:
-  DisplayManager &display_manager_;
+  DisplayManager& display_manager_;
   TextScroller text_scroller_;
   Clock clock_;
 };

@@ -23,6 +23,8 @@ void DisplayManager::SetMaxPower(uint8_t volts, uint32_t max_milliamps) {
   FastLED.setMaxPowerInVoltsAndMilliamps(volts, max_milliamps);
 }
 
-void DisplayManager::SetBrightness(uint8_t brightness) { FastLED.setBrightness(brightness); }
+void DisplayManager::SetBrightness(uint8_t brightness) {
+  FastLED.setBrightness(brightness);
+}
 
 }  // namespace led_marquee

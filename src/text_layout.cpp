@@ -18,8 +18,8 @@
 
 namespace led_marquee {
 
-TextLayout::TextLayout(DisplayManager &display_manager,
-                       const uint8_t *font_data, int y_offset)
+TextLayout::TextLayout(DisplayManager& display_manager,
+                       const uint8_t* font_data, int y_offset)
     : display_manager_(display_manager),
       text_scroller_(display_manager, font_data) {
   auto width = display_manager_.GetWidth();

@@ -28,7 +28,7 @@
 
 namespace led_marquee {
 
-const char *UserConfig::StringValue(std::string param) const {
+const char* UserConfig::StringValue(std::string param) const {
   return params_.at(param).value.get();
 }
 
@@ -43,9 +43,9 @@ void UserConfig::AddParam(const std::string name, const std::string desc,
   strlcpy(value.get(), default_value.c_str(), len + 1);
   // Hang on to the storage for all these strings, since WiFiManager doesn't
   // take ownership of anything.
-  const auto &[it, insertion] = params_.try_emplace(
+  const auto& [it, insertion] = params_.try_emplace(
       name, UserParameter{name, desc, std::move(value), len});
-  auto &param = it->second;
+  auto& param = it->second;
 
   // Add the new parameter to WiFiManager.
   auto wm_param = std::make_unique<WiFiManagerParameter>(
@@ -58,7 +58,7 @@ void UserConfig::AddHtml(const String html) {
   // Copy the string to owned storage.
   auto value = std::unique_ptr<char[]>(new char[html.length() + 1]);
   strlcpy(value.get(), html.c_str(), html.length() + 1);
-  auto &param = wm_html_.emplace_back(UserParameter{.value = std::move(value)});
+  auto& param = wm_html_.emplace_back(UserParameter{.value = std::move(value)});
 
   // Add the HTML to WiFiManager.
   auto wm_param = std::make_unique<WiFiManagerParameter>(param.value.get());
@@ -67,17 +67,17 @@ void UserConfig::AddHtml(const String html) {
 }
 
 void UserConfig::ReadFromWifiManager() {
-  for (auto &[name, param] : params_) {
+  for (auto& [name, param] : params_) {
     strlcpy(param.value.get(), param.wm_param->getValue(), param.len + 1);
   }
 }
 
-void UserConfig::ReadFromJson(const DynamicJsonDocument &json) {
-  for (auto &[name, param] : params_) {
+void UserConfig::ReadFromJson(const DynamicJsonDocument& json) {
+  for (auto& [name, param] : params_) {
     if (json.containsKey(name)) {
       String tmp;
-      const char *source;
-      if (json[name].is<const char *>()) {
+      const char* source;
+      if (json[name].is<const char*>()) {
         source = json[name];
       } else if (json[name].is<int>()) {
         tmp = String(json[name].as<int>());
@@ -93,8 +93,8 @@ void UserConfig::ReadFromJson(const DynamicJsonDocument &json) {
   }
 }
 
-void UserConfig::ToJson(DynamicJsonDocument &json) {
-  for (auto &[name, param] : params_) {
+void UserConfig::ToJson(DynamicJsonDocument& json) {
+  for (auto& [name, param] : params_) {
     json[name] = param.value.get();
   }
 }

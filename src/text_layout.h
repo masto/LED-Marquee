@@ -28,17 +28,17 @@ namespace led_marquee {
 
 class TextLayout {
  public:
-  TextLayout(DisplayManager &display_manager, const uint8_t *font_data,
+  TextLayout(DisplayManager& display_manager, const uint8_t* font_data,
              int y_offset = 0);
 
   // Not copyable or movable
-  TextLayout(const TextLayout &) = delete;
-  TextLayout &operator=(const TextLayout &) = delete;
+  TextLayout(const TextLayout&) = delete;
+  TextLayout& operator=(const TextLayout&) = delete;
 
-  TextScroller &text() { return text_scroller_; };
+  TextScroller& text() { return text_scroller_; };
 
  private:
-  DisplayManager &display_manager_;
+  DisplayManager& display_manager_;
   TextScroller text_scroller_;
 };
 

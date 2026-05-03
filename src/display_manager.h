@@ -83,7 +83,7 @@ class DisplayManager {
 
  private:
   DisplayManager(std::shared_ptr<cLEDMatrixBase> leds, bool enable_display)
-      : leds_(leds), enable_display_(enable_display){};
+      : leds_(leds), enable_display_(enable_display) {};
 
   std::shared_ptr<cLEDMatrixBase> leds_;
   bool enable_display_ = true;

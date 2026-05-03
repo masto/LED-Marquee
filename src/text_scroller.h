@@ -28,10 +28,10 @@ namespace led_marquee {
 
 class TextScroller {
  public:
-  TextScroller(DisplayManager &display_manager, const uint8_t *font_data);
+  TextScroller(DisplayManager& display_manager, const uint8_t* font_data);
 
-  TextScroller(const TextScroller &other) = default;
-  TextScroller &operator=(const TextScroller &other) = default;
+  TextScroller(const TextScroller& other) = default;
+  TextScroller& operator=(const TextScroller& other) = default;
 
   void Init(const int width, const int height, const int x, const int y);
 
@@ -42,8 +42,8 @@ class TextScroller {
   void SetMaxLength(const int max_length) { max_length_ = max_length; };
   void EnableScrolling();
 
-  void ShowStaticText(const String &);
-  void ShowScrollText(const String &);
+  void ShowStaticText(const String&);
+  void ShowScrollText(const String&);
   void ShowScrollText();
 
   void EraseArea();
@@ -53,7 +53,7 @@ class TextScroller {
  private:
   enum class ScrollMode { kStatic, kScrolling };
 
-  DisplayManager &display_manager_;
+  DisplayManager& display_manager_;
   cLEDText led_text_;
   ScrollMode scroll_mode_ = ScrollMode::kScrolling;
 
