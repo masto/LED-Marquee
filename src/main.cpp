@@ -56,6 +56,14 @@ extern "C" {
 // mutex, so 30s is comfortably above any expected normal stall.
 constexpr uint32_t kWatchdogTimeoutSec = 30;
 
+// How long to wait in WiFiManager's auto-opened config portal before giving
+// up and rebooting. WiFiManager opens its AP if the saved credentials don't
+// connect on boot, which can happen for a transient reason (router rebooting
+// while we are too); we don't want a momentary outage to leave the marquee
+// stuck waiting for someone to walk over and configure it. Long enough for
+// an unhurried first-time setup, and matches setConfigPortalTimeout(300).
+constexpr unsigned long kAutoConfigRebootMs = 5UL * 60UL * 1000UL;
+
 // Shared-state mutex.
 //
 // The marquee has three threads of execution that all touch display state and
@@ -110,6 +118,12 @@ bool enable_ota = false;
 bool config_mode = false;
 bool should_save_config = false;
 String scroll_next;
+
+// Set when WiFiManager opens its config portal on its own (i.e., the saved
+// credentials failed to connect at boot). Used to detect "stuck in auto
+// config portal" and reboot, distinguishing it from the runtime button-press
+// path (which calls startWebPortal() without going through ConfigModeCallback).
+unsigned long auto_config_entered_ms = 0;
 
 String mqtt_node_topic;
 String mqtt_command_topic;
@@ -250,9 +264,20 @@ void SaveParamsCallback() {
   config.ReadFromWifiManager();
 }
 
-// When WiFiManager enters configuration mode, display a prompt
+// When WiFiManager enters configuration mode, display a prompt. This fires
+// only when WiFiManager opens its own AP (i.e., the saved credentials didn't
+// connect); the runtime button-press path uses startWebPortal() in STA mode
+// and doesn't invoke this callback. We record the time so the main loop can
+// reboot us if we get stuck here after a transient WiFi outage.
 void ConfigModeCallback(WiFiManager* myWiFiManager) {
   config_mode = true;
+  if (auto_config_entered_ms == 0) {
+    auto_config_entered_ms = millis();
+    // millis() is 0 immediately after boot; bump to 1 so the "is set" check
+    // (!= 0) is unambiguous.
+    if (auto_config_entered_ms == 0) auto_config_entered_ms = 1;
+    led_marquee::SetBreadcrumb("auto_config_portal");
+  }
   RemoveClock();
 
   layout->text().ShowScrollText(
@@ -780,10 +805,30 @@ void CheckForStartup() {
       WiFi.status() == WL_CONNECTED) {
     is_connected = true;
     config_mode = false;
+    auto_config_entered_ms = 0;
     debug_println("Starting up");
 
     InitMain();
   }
+}
+
+// If WiFiManager auto-opened its config portal because the saved credentials
+// failed at boot, give a human a reasonable window to walk over and configure
+// it, then reboot. By the time we get here, WiFi may well have come back
+// (e.g., the router has finished rebooting), and a fresh autoConnect will
+// succeed. Without this the marquee can sit displaying "Connect to ... to
+// configure" indefinitely.
+void RebootIfStuckInAutoConfig() {
+  if (auto_config_entered_ms == 0) return;  // not in auto config mode
+  if (is_connected) return;                 // we already escaped
+  if (millis() - auto_config_entered_ms < kAutoConfigRebootMs) return;
+
+  debug_println("Auto-config portal timed out; rebooting to retry WiFi");
+  led_marquee::SetBreadcrumb("auto_cfg_timeout");
+  layout->text().ShowStaticText("RETRY");
+  delay(2000);
+  led_marquee::NoteCleanRestart();
+  ESP.restart();
 }
 
 void setup() {
@@ -887,6 +932,7 @@ void loop() {
   // Periodic housekeeping. Run every 5 seconds to not waste CPU.
   EVERY_N_SECONDS(5) {
     RebootIfDisconnected(disconnectCount);
+    RebootIfStuckInAutoConfig();
     CheckForStartup();
     // Update the breadcrumb periodically so a crash report includes a recent
     // sense of where we were and a heap snapshot.
