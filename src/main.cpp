@@ -77,7 +77,10 @@ constexpr unsigned long kResetHoldMs = 1000;
 constexpr unsigned long kButtonConfigRebootMs = 10UL * 60UL * 1000UL;
 
 // How often to publish the retained diagnostic snapshot while MQTT is up.
-constexpr unsigned long kDiagIntervalSec = 60;
+// Building and publishing it takes a few milliseconds in the main loop, which
+// at high scroll rates could show as a hitch; set to 0 to disable the
+// periodic publish (connect/transition/restart/on-demand snapshots remain).
+constexpr unsigned long kDiagIntervalSec = 0;
 
 // Shared-state mutex.
 //
@@ -270,12 +273,19 @@ void PublishDiag(const char* event, const char* keep_as = nullptr) {
   doc["mqtt_connects"] = mqtt_connect_count;
 
   // Display. `text` is what the scroller is actually holding, which is the
-  // ground truth when the state flags and the screen disagree.
+  // ground truth when the state flags and the screen disagree. The buffer
+  // carries LEDText effect codes (raw bytes >= 0x80, plus color parameters),
+  // which ArduinoJson would emit verbatim and which aren't valid UTF-8, so
+  // keep only printable ASCII.
   doc["display_on"] = enable_display;
   doc["clock"] = enable_clock;
-  String text = layout->text().ScrollBuffer();
+  String text;
+  for (char c : layout->text().ScrollBuffer()) {
+    if (c >= 0x20 && c < 0x7f) text += c;
+    if (text.length() >= 80) break;
+  }
   text.trim();
-  doc["text"] = text.substring(0, 80);
+  doc["text"] = text;
   doc["queued_len"] = scroll_next.length();
 
   // Memory.
@@ -1185,7 +1195,9 @@ void loop() {
 
   // Retained heartbeat with the full state, so the last minute before any
   // failure is on the broker.
-  EVERY_N_SECONDS(kDiagIntervalSec) { PublishDiag("periodic"); }
+  if (kDiagIntervalSec > 0) {
+    EVERY_N_SECONDS(kDiagIntervalSec) { PublishDiag("periodic"); }
+  }
 
   // If the reset pin is held low during operation, enter WiFi Manager config.
   // Requires kResetHoldMs of continuous LOW; any HIGH sample restarts the
