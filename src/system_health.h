@@ -56,8 +56,19 @@ uint32_t GetBootCount();
 void SetBreadcrumb(const char* info);
 
 // Call before any planned ESP.restart() / wm->reboot() so the next boot
-// doesn't report it as an unexpected reset.
-void NoteCleanRestart();
+// doesn't report it as an unexpected reset. `reason` (a short tag such as
+// "wifi_lost") and the current uptime are preserved across the restart and
+// reported by GetLastRestartInfo() on the next boot.
+void NoteCleanRestart(const char* reason = nullptr);
+
+// Human-readable description of how the previous run ended, clean or not:
+// e.g. "SW (wifi_lost) after 302s" or "TASK_WDT | last: mqtt_connect".
+// Unlike GetCrashReport() this is never empty, so a diagnostic snapshot can
+// always say why we last rebooted.
+String GetLastRestartInfo();
+
+// Name of the SoC reset reason for the current boot ("POWERON", "SW", ...).
+const char* GetResetReasonName();
 
 // Initialize the Task Watchdog Timer for the current task (call from setup()
 // from the loop task) with the given timeout in seconds. If the loop fails

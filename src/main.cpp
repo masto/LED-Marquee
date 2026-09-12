@@ -64,6 +64,21 @@ constexpr uint32_t kWatchdogTimeoutSec = 30;
 // an unhurried first-time setup, and matches setConfigPortalTimeout(300).
 constexpr unsigned long kAutoConfigRebootMs = 5UL * 60UL * 1000UL;
 
+// How long the reset pin must read LOW without interruption before we enter
+// the runtime web portal. The pin has only the internal pull-up, so a couple
+// of point samples 50ms apart can be fooled by a glitch; a full second of
+// unbroken LOW can't.
+constexpr unsigned long kResetHoldMs = 1000;
+
+// How long to stay in the button-triggered web portal before rebooting. A real
+// configuration session ends in SaveConfigAndRestart() well before this; it
+// bounds the damage if the pin is ever read LOW spuriously, since nothing else
+// ever leaves that state.
+constexpr unsigned long kButtonConfigRebootMs = 10UL * 60UL * 1000UL;
+
+// How often to publish the retained diagnostic snapshot while MQTT is up.
+constexpr unsigned long kDiagIntervalSec = 60;
+
 // Shared-state mutex.
 //
 // The marquee has three threads of execution that all touch display state and
@@ -74,19 +89,20 @@ constexpr unsigned long kAutoConfigRebootMs = 5UL * 60UL * 1000UL;
 // the cLEDText state machine, or call FastLED.show() while another caller is
 // repainting the buffer. That's a real source of intermittent crashes.
 //
-// We use a single recursive-ish protection pattern: any code that touches
-// shared state (animation, scroll_next, layout->text() mutating calls,
-// FastLED.show()) takes this mutex first. Critical sections are short.
+// Any code that touches shared state (animation, scroll_next, layout->text()
+// mutating calls, FastLED.show()) takes this mutex first. Critical sections
+// are short. The mutex is recursive so helpers that need the lock (e.g.
+// PublishDiag) can be called from code that already holds it.
 SemaphoreHandle_t g_state_mutex = nullptr;
 
 // RAII helper for the state mutex.
 class StateLock {
  public:
   StateLock() {
-    if (g_state_mutex) xSemaphoreTake(g_state_mutex, portMAX_DELAY);
+    if (g_state_mutex) xSemaphoreTakeRecursive(g_state_mutex, portMAX_DELAY);
   }
   ~StateLock() {
-    if (g_state_mutex) xSemaphoreGive(g_state_mutex);
+    if (g_state_mutex) xSemaphoreGiveRecursive(g_state_mutex);
   }
   StateLock(const StateLock&) = delete;
   StateLock& operator=(const StateLock&) = delete;
@@ -125,9 +141,25 @@ String scroll_next;
 // path (which calls startWebPortal() without going through ConfigModeCallback).
 unsigned long auto_config_entered_ms = 0;
 
+// Set when the runtime (reset pin) web portal is entered, so it can be timed
+// out the same way.
+unsigned long button_config_entered_ms = 0;
+
+// Diagnostic state, published in the <node>/diag snapshot. See PublishDiag().
+bool auto_config_seen = false;  // this boot went through the auto portal
+String config_prompt;           // exact text ConfigModeCallback put on screen
+bool autoconnect_ok = false;
+unsigned long autoconnect_ms = 0;
+uint32_t mqtt_connect_count = 0;
+volatile uint32_t wifi_disconnect_events = 0;
+volatile uint8_t wifi_last_disconnect_reason = 0;
+volatile uint32_t wifi_last_disconnect_s = 0;
+unsigned long prompt_stuck_since_ms = 0;
+
 String mqtt_node_topic;
 String mqtt_command_topic;
 String mqtt_ready_topic;
+String mqtt_diag_topic;
 
 led_marquee::UserConfig config(wm);
 
@@ -191,6 +223,97 @@ void RemoveClock() {
       *display_manager, kTextFont, 0, kClockFont);
 }
 
+// Publish a snapshot of everything relevant to "what state is the marquee
+// in?" to <node>/diag, retained, so it can be inspected after the fact even if
+// nobody had an MQTT client open at the time. Published on MQTT connect, every
+// kDiagIntervalSec, on state transitions, right before a planned restart, and
+// on demand (any message to <node>/diag/get). No-op until MQTT is up.
+//
+// The rolling <node>/diag is overwritten by the next boot's first publish, so
+// snapshots worth keeping across a reboot (the state right before a planned
+// restart, or an anomaly) are also published to <node>/diag/<keep_as>.
+//
+// Takes the state mutex (it reads display state); safe to call from code that
+// already holds it.
+void PublishDiag(const char* event, const char* keep_as = nullptr) {
+  if (mqtt_diag_topic.isEmpty() || !mqtt_client.connected()) return;
+
+  StateLock lock;
+
+  DynamicJsonDocument doc(1536);
+  doc["event"] = event;
+  doc["boot"] = led_marquee::GetBootCount();
+  doc["uptime_s"] = millis() / 1000UL;
+  doc["reset_reason"] = led_marquee::GetResetReasonName();
+  doc["last_restart"] = led_marquee::GetLastRestartInfo();
+
+  // Our own state machine.
+  doc["is_connected"] = is_connected;
+  doc["config_mode"] = config_mode;
+  doc["auto_config_seen"] = auto_config_seen;
+  doc["auto_config_pending"] = auto_config_entered_ms != 0;
+  doc["button_config"] = button_config_entered_ms != 0;
+  doc["autoconnect_ok"] = autoconnect_ok;
+  doc["autoconnect_ms"] = autoconnect_ms;
+
+  // WiFiManager / WiFi.
+  doc["portal_active"] = wm->getConfigPortalActive();
+  doc["web_portal_active"] = wm->getWebPortalActive();
+  doc["wifi_status"] = static_cast<int>(WiFi.status());
+  doc["wifi_mode"] = static_cast<int>(WiFi.getMode());
+  doc["ssid"] = WiFi.SSID();
+  doc["ip"] = WiFi.localIP().toString();
+  doc["rssi"] = WiFi.RSSI();
+  doc["wifi_disconnects"] = wifi_disconnect_events;
+  doc["wifi_last_disconnect_reason"] = wifi_last_disconnect_reason;
+  doc["wifi_last_disconnect_s"] = wifi_last_disconnect_s;
+  doc["mqtt_connects"] = mqtt_connect_count;
+
+  // Display. `text` is what the scroller is actually holding, which is the
+  // ground truth when the state flags and the screen disagree.
+  doc["display_on"] = enable_display;
+  doc["clock"] = enable_clock;
+  String text = layout->text().ScrollBuffer();
+  text.trim();
+  doc["text"] = text.substring(0, 80);
+  doc["queued_len"] = scroll_next.length();
+
+  // Memory.
+  doc["free_heap"] = ESP.getFreeHeap();
+  doc["min_free_heap"] = ESP.getMinFreeHeap();
+  doc["max_alloc"] = ESP.getMaxAllocHeap();
+
+  String payload;
+  serializeJson(doc, payload);
+  mqtt_client.publish(mqtt_diag_topic.c_str(), 0, true, payload.c_str());
+  if (keep_as != nullptr) {
+    String keep_topic = mqtt_diag_topic + "/" + keep_as;
+    mqtt_client.publish(keep_topic.c_str(), 0, true, payload.c_str());
+  }
+  debug_println("diag: " + payload);
+}
+
+// The one way to reboot on purpose. Publishes a final retained diag snapshot
+// (if MQTT is up) so that, together with the next boot's "last_restart", the
+// reason is always recoverable; optionally shows `display_text`; waits
+// `delay_ms` for both to land; marks the restart as clean; restarts.
+//
+// `reason` is a short tag (it's stored in RTC memory across the reboot).
+void PlannedRestart(const char* reason, const char* display_text,
+                    unsigned long delay_ms = 2000) {
+  debug_printf("Planned restart: %s\n", reason);
+  led_marquee::SetBreadcrumb(reason);
+  {
+    StateLock lock;
+    if (display_text != nullptr) layout->text().ShowStaticText(display_text);
+    String event = String("restart:") + reason;
+    PublishDiag(event.c_str(), "restart");
+  }
+  delay(delay_ms);
+  led_marquee::NoteCleanRestart(reason);
+  ESP.restart();
+}
+
 // Mount a SPIFFS filesystem
 std::unique_ptr<fs::SPIFFSFS> GetFileSystem(const FsLabel label) {
   auto fs = std::make_unique<fs::SPIFFSFS>();
@@ -249,9 +372,7 @@ void CheckForResetConfig() {
           fs->end();
           fs->format();
         }
-        delay(1000);
-        led_marquee::NoteCleanRestart();
-        wm->reboot();
+        PlannedRestart("config_cleared", nullptr);
       }
     }
   }
@@ -271,6 +392,7 @@ void SaveParamsCallback() {
 // reboot us if we get stuck here after a transient WiFi outage.
 void ConfigModeCallback(WiFiManager* myWiFiManager) {
   config_mode = true;
+  auto_config_seen = true;
   if (auto_config_entered_ms == 0) {
     auto_config_entered_ms = millis();
     // millis() is 0 immediately after boot; bump to 1 so the "is set" check
@@ -280,8 +402,9 @@ void ConfigModeCallback(WiFiManager* myWiFiManager) {
   }
   RemoveClock();
 
-  layout->text().ShowScrollText(
-      "Connect to " + myWiFiManager->getConfigPortalSSID() + " to configure.");
+  config_prompt =
+      "Connect to " + myWiFiManager->getConfigPortalSSID() + " to configure.";
+  layout->text().ShowScrollText(config_prompt);
 }
 
 // The exit in the config portal isn't particularly useful, and results in an
@@ -295,9 +418,7 @@ void WmWebServerCallback() {
     wm->server->sendHeader("Cache-Control",
                            "no-cache, no-store, must-revalidate");
     wm->server->send(200, "text/plain", "Bye!");
-    delay(1000);
-    led_marquee::NoteCleanRestart();
-    wm->reboot();
+    PlannedRestart("web_exit", nullptr);
   });
 }
 
@@ -387,9 +508,7 @@ void SaveConfigAndRestart() {
     fs->end();
   }
 
-  delay(1000);
-  led_marquee::NoteCleanRestart();
-  ESP.restart();
+  PlannedRestart("config_saved", nullptr);
 }
 
 void DumpWmInfo() {
@@ -466,10 +585,12 @@ void MqttDiscovery() {
 void OnMqttConnect(bool sessionPresent) {
   debug_println("Connected to MQTT");
   led_marquee::SetBreadcrumb("mqtt_connect");
+  mqtt_connect_count++;
 
   mqtt_node_topic = String(kMqttPrefix) + "/" + config.StringValue("mqtt_node");
   mqtt_command_topic = mqtt_node_topic + "/set";
   mqtt_ready_topic = mqtt_node_topic + "/ready";
+  mqtt_diag_topic = mqtt_node_topic + "/diag";
 
   String mqtt_subscription = mqtt_node_topic + "/#";
   mqtt_client.subscribe(mqtt_subscription.c_str(), 0);
@@ -481,9 +602,13 @@ void OnMqttConnect(bool sessionPresent) {
   // from the previous run. Topic: <prefix>/<node>/status, retained so a
   // subscriber that connects later still gets the most recent boot info.
   {
-    StaticJsonDocument<384> status;
+    StaticJsonDocument<512> status;
     status["boot"] = led_marquee::GetBootCount();
     status["uptime_s"] = millis() / 1000UL;
+    status["reset_reason"] = led_marquee::GetResetReasonName();
+    status["last_restart"] = led_marquee::GetLastRestartInfo();
+    status["auto_config"] = auto_config_seen;
+    status["autoconnect_ms"] = autoconnect_ms;
     status["free_heap"] = ESP.getFreeHeap();
     status["min_free_heap"] = ESP.getMinFreeHeap();
     status["ip"] = WiFi.localIP().toString();
@@ -509,6 +634,8 @@ void OnMqttConnect(bool sessionPresent) {
     }
     pending_crash_report = "";
   }
+
+  PublishDiag("mqtt_connect");
 }
 
 void OnMqttMessage(char* topic, char* payload,
@@ -525,6 +652,20 @@ void OnMqttMessage(char* topic, char* payload,
   }
 
   String str_topic = String(topic);
+
+  // Diagnostics on demand; any payload will do.
+  if (str_topic == mqtt_diag_topic + "/get") {
+    PublishDiag("request");
+    return;
+  }
+
+  // Our own retained publications come back to us on every (re)subscribe.
+  if (str_topic == mqtt_ready_topic || str_topic == mqtt_diag_topic ||
+      str_topic.startsWith(mqtt_diag_topic + "/") ||
+      str_topic == mqtt_node_topic + "/status" ||
+      str_topic == mqtt_node_topic + "/crashlog") {
+    return;
+  }
 
   // payload is NOT guaranteed to be null-terminated in AsyncMqttClient; pass
   // the explicit length so ArduinoJson doesn't read past the buffer end.
@@ -581,8 +722,6 @@ void OnMqttMessage(char* topic, char* payload,
       if (json.containsKey("enabled")) {
         enable_ota = json["enabled"];
       }
-    } else if (str_topic == mqtt_node_topic + "/ready") {
-      // Ignore our own messages
     } else {
       debug_print("Unknown topic: ");
       debug_println(topic);
@@ -757,9 +896,7 @@ void InitArduinoOTA() {
     FastLED.clear();
     ota_message.text().ShowStaticText(error_text);
 
-    delay(5000);
-    led_marquee::NoteCleanRestart();
-    ESP.restart();
+    PlannedRestart("ota_error", nullptr, 5000);
   });
 
   ArduinoOTA.begin();
@@ -789,10 +926,7 @@ void RebootIfDisconnected(byte& disconnect_count) {
                   " count=" + static_cast<int>(disconnect_count));
     if (disconnect_count > 3) {
       debug_println("Rebooting due to sustained WiFi disconnection");
-      layout->text().ShowStaticText("DISCONNECTED");
-      delay(3000);
-      led_marquee::NoteCleanRestart();
-      ESP.restart();
+      PlannedRestart("wifi_lost", "DISCONNECTED", 3000);
     }
   } else {
     disconnect_count = 0;
@@ -801,15 +935,30 @@ void RebootIfDisconnected(byte& disconnect_count) {
 
 // Detect when WiFi has come up, and complete initialization
 void CheckForStartup() {
-  if (is_connected == false && wm->getConfigPortalActive() == false &&
-      WiFi.status() == WL_CONNECTED) {
-    is_connected = true;
-    config_mode = false;
-    auto_config_entered_ms = 0;
-    debug_println("Starting up");
-
-    InitMain();
+  if (is_connected || wm->getConfigPortalActive() ||
+      WiFi.status() != WL_CONNECTED) {
+    return;
   }
+
+  // The auto-opened portal has closed on its own (WiFiManager's own timeout,
+  // or a successful save through it) and STA is up. Don't try to start the
+  // show from here: ConfigModeCallback replaced the layout with a clockless
+  // one and there's no way back, and a fresh boot with the router reachable
+  // connects straight away. This also removes a race with the 5-minute cap
+  // below, which previously decided between "start clockless" and "reboot"
+  // depending on where the 5-second tick landed. A pending
+  // SaveConfigAndRestart() runs earlier in loop(), so a real configuration
+  // session isn't cut short.
+  if (auto_config_entered_ms != 0) {
+    PlannedRestart("auto_cfg_closed", "RETRY");
+    return;
+  }
+
+  is_connected = true;
+  config_mode = false;
+  debug_println("Starting up");
+
+  InitMain();
 }
 
 // If WiFiManager auto-opened its config portal because the saved credentials
@@ -818,17 +967,80 @@ void CheckForStartup() {
 // (e.g., the router has finished rebooting), and a fresh autoConnect will
 // succeed. Without this the marquee can sit displaying "Connect to ... to
 // configure" indefinitely.
+//
+// Deliberately doesn't look at is_connected: nothing legitimate ever clears
+// auto_config_entered_ms, so if we've been through the auto portal this boot,
+// a reboot is the only clean way out no matter what else happened.
 void RebootIfStuckInAutoConfig() {
   if (auto_config_entered_ms == 0) return;  // not in auto config mode
-  if (is_connected) return;                 // we already escaped
   if (millis() - auto_config_entered_ms < kAutoConfigRebootMs) return;
 
   debug_println("Auto-config portal timed out; rebooting to retry WiFi");
-  led_marquee::SetBreadcrumb("auto_cfg_timeout");
-  layout->text().ShowStaticText("RETRY");
-  delay(2000);
-  led_marquee::NoteCleanRestart();
-  ESP.restart();
+  PlannedRestart("auto_cfg_timeout", "RETRY");
+}
+
+// Same idea for the reset-pin web portal, which otherwise has no exit but a
+// save or a power cycle.
+void RebootIfStuckInButtonConfig() {
+  if (button_config_entered_ms == 0) return;
+  if (millis() - button_config_entered_ms < kButtonConfigRebootMs) return;
+
+  debug_println("Button config portal timed out; rebooting");
+  PlannedRestart("button_cfg_timeout", "RETRY");
+}
+
+// The failure we've actually seen on the wall and can't derive from the code:
+// the marquee is online (MQTT up, answering commands) yet still scrolling the
+// "Connect to ... to configure." prompt. No code path we can find sets that
+// text after startup, so rather than assume, detect it: if we consider
+// ourselves started and the scroller still holds the prompt, publish
+// everything we know immediately (so the retained snapshot survives), leave
+// it up for a while in case someone wants to poke at it live, then reboot.
+void RecoverIfPromptStuck() {
+  if (!is_connected || config_prompt.isEmpty()) return;
+
+  bool stuck;
+  {
+    StateLock lock;
+    stuck = layout->text().ScrollBuffer().endsWith(config_prompt);
+  }
+  if (!stuck) {
+    prompt_stuck_since_ms = 0;
+    return;
+  }
+
+  if (prompt_stuck_since_ms == 0) {
+    prompt_stuck_since_ms = millis();
+    if (prompt_stuck_since_ms == 0) prompt_stuck_since_ms = 1;
+    debug_println("Config prompt still on screen while connected!");
+    led_marquee::SetBreadcrumb("prompt_stuck");
+    PublishDiag("prompt_stuck", "anomaly");
+    return;
+  }
+
+  if (millis() - prompt_stuck_since_ms < kAutoConfigRebootMs) return;
+  PlannedRestart("prompt_stuck", "RETRY");
+}
+
+// Enter WiFiManager's web portal (STA mode, no AP) for runtime
+// reconfiguration. There is no way back to normal operation except a reboot,
+// which RebootIfStuckInButtonConfig() or a save will provide.
+void EnterButtonConfig() {
+  config_mode = true;
+  button_config_entered_ms = millis();
+  if (button_config_entered_ms == 0) button_config_entered_ms = 1;
+  led_marquee::SetBreadcrumb("button_config_portal");
+  {
+    StateLock lock;
+    RemoveClock();
+    layout->text().ShowScrollText("CONFIG: http://" +
+                                  WiFi.localIP().toString());
+    PublishDiag("button_config");
+  }
+  debug_println("Enter WebPortal");
+  server.end();
+  wm->setParamsPage(true);
+  wm->startWebPortal();
 }
 
 void setup() {
@@ -840,7 +1052,7 @@ void setup() {
 
   // Create the shared-state mutex before any code path that could mutate
   // shared state from another task (MQTT/HTTP callbacks, FreeRTOS timers).
-  g_state_mutex = xSemaphoreCreateMutex();
+  g_state_mutex = xSemaphoreCreateRecursiveMutex();
 
   WiFi.mode(WIFI_STA);  // explicitly set mode, esp defaults to STA+AP
 
@@ -875,9 +1087,21 @@ void setup() {
 
   SetupWiFiManager();
 
+  // Count STA disconnects (and remember the last reason) for the diag
+  // snapshot. Runs on the WiFi event task; plain integer stores only.
+  WiFi.onEvent(
+      [](WiFiEvent_t event, WiFiEventInfo_t info) {
+        wifi_disconnect_events++;
+        wifi_last_disconnect_reason = info.wifi_sta_disconnected.reason;
+        wifi_last_disconnect_s = millis() / 1000UL;
+      },
+      ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
   debug_println("Connecting to WiFi...");
-  bool res = wm->autoConnect(kSetupAp);
-  debug_println(res ? "Connected" : "Connection failed");
+  unsigned long autoconnect_start = millis();
+  autoconnect_ok = wm->autoConnect(kSetupAp);
+  autoconnect_ms = millis() - autoconnect_start;
+  debug_println(autoconnect_ok ? "Connected" : "Connection failed");
 
   InitTime();
 
@@ -933,27 +1157,38 @@ void loop() {
   EVERY_N_SECONDS(5) {
     RebootIfDisconnected(disconnectCount);
     RebootIfStuckInAutoConfig();
+    RebootIfStuckInButtonConfig();
     CheckForStartup();
+    RecoverIfPromptStuck();
     // Update the breadcrumb periodically so a crash report includes a recent
-    // sense of where we were and a heap snapshot.
+    // sense of where we were, the uptime, and a heap snapshot.
     char crumb[64];
-    snprintf(crumb, sizeof(crumb), "loop ip=%s heap=%u",
-             WiFi.localIP().toString().c_str(), (unsigned)ESP.getFreeHeap());
+    snprintf(crumb, sizeof(crumb), "loop up=%lus ip=%s heap=%u",
+             millis() / 1000UL, WiFi.localIP().toString().c_str(),
+             (unsigned)ESP.getFreeHeap());
     led_marquee::SetBreadcrumb(crumb);
   }
 
-  // If reset pin is pulled low during operation, enter WiFi Manager config
-  if (config_mode == false && digitalRead(kResetPin) == LOW) {
-    delay(50);
+  // Retained heartbeat with the full state, so the last minute before any
+  // failure is on the broker.
+  EVERY_N_SECONDS(kDiagIntervalSec) { PublishDiag("periodic"); }
+
+  // If the reset pin is held low during operation, enter WiFi Manager config.
+  // Requires kResetHoldMs of continuous LOW; any HIGH sample restarts the
+  // count.
+  if (config_mode == false) {
+    static bool reset_low = false;
+    static unsigned long reset_low_since = 0;
     if (digitalRead(kResetPin) == LOW) {
-      config_mode = true;
-      RemoveClock();
-      layout->text().ShowScrollText("CONFIG: http://" +
-                                    WiFi.localIP().toString());
-      debug_println("Enter WebPortal");
-      server.end();
-      wm->setParamsPage(true);
-      wm->startWebPortal();
+      if (!reset_low) {
+        reset_low = true;
+        reset_low_since = millis();
+      } else if (millis() - reset_low_since >= kResetHoldMs) {
+        reset_low = false;
+        EnterButtonConfig();
+      }
+    } else {
+      reset_low = false;
     }
   }
 }

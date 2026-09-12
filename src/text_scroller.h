@@ -50,6 +50,10 @@ class TextScroller {
 
   bool Animate();
 
+  // The text currently loaded into the scroller (including the leading
+  // blank run). Exposed for diagnostics.
+  const String& ScrollBuffer() const { return scroll_buf_; };
+
  private:
   enum class ScrollMode { kStatic, kScrolling };
 

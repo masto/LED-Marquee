@@ -26,9 +26,12 @@ namespace led_marquee {
 
 namespace {
 
-constexpr uint32_t kStateMagic = 0xC0FFEEEEu;
+// Bump the magic whenever PersistentState's layout changes, so a firmware
+// update doesn't misread the previous image's state.
+constexpr uint32_t kStateMagic = 0xC0FFEEEFu;
 constexpr uint32_t kCleanMarker = 0xDEADBEEFu;
 constexpr size_t kBreadcrumbSize = 96;
+constexpr size_t kRestartReasonSize = 32;
 
 // RTC_NOINIT memory is preserved across software resets (including panics
 // and watchdog resets) but its contents are undefined after a hard power
@@ -37,13 +40,17 @@ struct PersistentState {
   uint32_t magic;
   uint32_t clean_marker;
   uint32_t boot_count;
-  uint32_t last_reason;  // esp_reset_reason_t cast to uint32_t
+  uint32_t last_reason;    // esp_reset_reason_t cast to uint32_t
+  uint32_t last_uptime_s;  // uptime when NoteCleanRestart() was called
   char breadcrumb[kBreadcrumbSize];
+  char restart_reason[kRestartReasonSize];  // set by NoteCleanRestart()
 };
 
 RTC_NOINIT_ATTR PersistentState g_state;
 
 String g_crash_report;
+String g_last_restart;
+esp_reset_reason_t g_reset_reason = ESP_RST_UNKNOWN;
 uint32_t g_boot_count = 0;
 
 const char* ResetReasonString(esp_reset_reason_t r) {
@@ -79,6 +86,7 @@ const char* ResetReasonString(esp_reset_reason_t r) {
 
 void InitSystemHealth() {
   esp_reset_reason_t reason = esp_reset_reason();
+  g_reset_reason = reason;
 
   bool magic_valid = (g_state.magic == kStateMagic);
   bool was_clean = magic_valid && g_state.clean_marker == kCleanMarker;
@@ -104,12 +112,34 @@ void InitSystemHealth() {
     g_crash_report += g_boot_count;
   }
 
+  // Describe how the previous run ended, clean or not, for the diagnostic
+  // snapshot. Planned restarts leave a reason and uptime behind; crashes
+  // leave a breadcrumb.
+  g_last_restart = ResetReasonString(reason);
+  if (was_clean) {
+    g_state.restart_reason[kRestartReasonSize - 1] = '\0';
+    if (g_state.restart_reason[0] != '\0') {
+      g_last_restart += " (";
+      g_last_restart += g_state.restart_reason;
+      g_last_restart += ")";
+    }
+    g_last_restart += " after ";
+    g_last_restart += g_state.last_uptime_s;
+    g_last_restart += "s";
+  } else if (magic_valid && g_state.breadcrumb[0] != '\0') {
+    g_state.breadcrumb[kBreadcrumbSize - 1] = '\0';
+    g_last_restart += " | last: ";
+    g_last_restart += g_state.breadcrumb;
+  }
+
   // Reset persistent state for the *current* run.
   g_state.magic = kStateMagic;
   g_state.clean_marker = 0;  // assume not clean unless told otherwise
   g_state.boot_count = g_boot_count;
   g_state.last_reason = static_cast<uint32_t>(reason);
+  g_state.last_uptime_s = 0;
   g_state.breadcrumb[0] = '\0';
+  g_state.restart_reason[0] = '\0';
 
   debug_printf("[health] boot#%u reset_reason=%s prev_clean=%d\n",
                (unsigned)g_boot_count, ResetReasonString(reason),
@@ -122,6 +152,10 @@ void InitSystemHealth() {
 
 String GetCrashReport() { return g_crash_report; }
 
+String GetLastRestartInfo() { return g_last_restart; }
+
+const char* GetResetReasonName() { return ResetReasonString(g_reset_reason); }
+
 uint32_t GetBootCount() { return g_boot_count; }
 
 void SetBreadcrumb(const char* info) {
@@ -133,7 +167,11 @@ void SetBreadcrumb(const char* info) {
   strlcpy(g_state.breadcrumb, info, kBreadcrumbSize);
 }
 
-void NoteCleanRestart() { g_state.clean_marker = kCleanMarker; }
+void NoteCleanRestart(const char* reason) {
+  g_state.clean_marker = kCleanMarker;
+  g_state.last_uptime_s = millis() / 1000UL;
+  strlcpy(g_state.restart_reason, reason ? reason : "", kRestartReasonSize);
+}
 
 void InitWatchdog(uint32_t timeout_seconds) {
   // Subscribe the calling task (the Arduino loop task when called from
