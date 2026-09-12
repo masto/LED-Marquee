@@ -846,7 +846,15 @@ void InitArduinoOTA() {
   static led_marquee::TextLayout ota_message(*display_manager, MatriseFontData,
                                              1);
 
+  // ArduinoOTA.handle() runs the whole transfer and flash write inside a
+  // single call from loop(), so loop() doesn't get to feed the task watchdog
+  // until the update is done. Any update longer than kWatchdogTimeoutSec was
+  // being cut off by a TASK_WDT reset. Feed it from the progress callback,
+  // which fires per received chunk; a transfer that actually stalls still
+  // gets reset, which is what we want.
   ArduinoOTA.onStart([]() {
+    led_marquee::SetBreadcrumb("ota_update");
+    led_marquee::FeedWatchdog();
     ota_message.text().SetColorRgb(0xff, 0xff, 0x00);
     ota_message.text().SetBackgroundMode(BACKGND_LEAVE);
     FastLED.clear();
@@ -855,6 +863,8 @@ void InitArduinoOTA() {
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     char progress_text[22];
+
+    led_marquee::FeedWatchdog();
 
     EVERY_N_SECONDS(1) {
       float pct = static_cast<float>(progress) / static_cast<float>(total);
@@ -870,6 +880,10 @@ void InitArduinoOTA() {
       FastLED.show();
     }
   });
+
+  // ArduinoOTA restarts the chip itself after a successful update; don't let
+  // the next boot report that as a crash.
+  ArduinoOTA.onEnd([]() { led_marquee::NoteCleanRestart("ota_update"); });
 
   ArduinoOTA.onError([](ota_error_t error) {
     const char* error_text;
